@@ -12,6 +12,9 @@
 		Different map projection
 		Possibly optimised for zoom (plot lines selectively)
 		Show distance to base AND vessel. Both TDist (true distance) and GDist (ground distance - orthodome).
+
+	This source code is released under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+	For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 */
 
 #define STRICT
@@ -189,15 +192,21 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 	bool GridResolution(void* id, char* str, void* data);
 	bool NumberOrbitsDisplayed(void* id, char* str, void* data);
 
+	int entriesPerPage = 13; // for list displays
+
 	if (configScreen)
 	{
 		switch (key)
 		{
 		case OAPI_KEY_MINUS:
 			configSelection = CONFIGSELECT((int(configSelection) + LASTENTRYCONFIG - 1) % int(LASTENTRYCONFIG)); // + 9 instead of -1, which results in negative result
+			if (int(configSelection) < currentTopListed) currentTopListed = int(configSelection);
+			if (int(configSelection) > currentTopListed + entriesPerPage) currentTopListed = int(configSelection) - entriesPerPage;
 			return true;
 		case OAPI_KEY_EQUALS:
 			configSelection = CONFIGSELECT((int(configSelection) + 1) % int(LASTENTRYCONFIG));
+			if (int(configSelection) < currentTopListed) currentTopListed = int(configSelection);
+			if (int(configSelection) > currentTopListed + entriesPerPage) currentTopListed = int(configSelection) - entriesPerPage;
 			return true;
 		case OAPI_KEY_M:
 
@@ -211,6 +220,10 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				return true;
 			case CONFIGSHOWVESSELS:
 				showVessels = !showVessels;
+				return true;
+			case CONFIGSHOWHISTORY:
+				showHistory = !showHistory;
+				if (!showHistory) shipHistoryLength = 0; // reset if turned off
 				return true;
 			case CONFIGPROJECTION:
 				proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION));
@@ -280,6 +293,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				return true;
 			case CONFIGSHOWVESSELS:
 				showVessels = false;
+				return true;
+			case CONFIGSHOWHISTORY:
+				showHistory = true;
 				return true;
 			case CONFIGPROJECTION:
 				proj = EQUIRECTANGULAR;
@@ -410,7 +426,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 		case OAPI_KEY_T:
 			oapiOpenInputBox("Reference planet:", ReferencePlanet, 0, 20, (void*)this);
 
-			// DEBUG! See if this has to be moved to SetReferencePlanet function.
 			referenceListScreen = false;
 			InvalidateButtons();
 			return true;
@@ -453,8 +468,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 		case EXPANDNONE:
 			break;
 		}
-
-		int entriesPerPage = 13;
 
 		switch (key)
 		{
@@ -585,7 +598,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				}
 			}
 
-			sprintf(oapiDebugString(), "ERROR! DEBUG! Invalid select press. %.2f", oapiGetSimTime());
 			return false; // we should have been through a return true before now
 		case OAPI_KEY_O: // select and return home
 			targetListScreen = false;
@@ -620,13 +632,10 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			return true;
 		case OAPI_KEY_X:
 			centreZoom /= 2;
-
 			if (centreZoom < 1) centreZoom = 1;
 			return true;
 		case OAPI_KEY_Z:
-			//panZoom *= 2.0;
 			centreZoom *= 2;
-
 			if (centreZoom > MAX_ZOOM) centreZoom = MAX_ZOOM;
 			return true;
 		case OAPI_KEY_K:
@@ -635,19 +644,17 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			InvalidateButtons();
 			return true;
 		case OAPI_KEY_MINUS:
-			//panLat += 1.0 * RAD / panZoom;
 			centreLat += 15.0 * RAD / double(centreZoom);
+			if (centreLat > PI05) centreLat = PI05;
 			return true;
 		case OAPI_KEY_EQUALS:
-			//panLat -= 1.0 * RAD / panZoom;
 			centreLat -= 15.0 * RAD / double(centreZoom);
+			if (centreLat < -PI05) centreLat = -PI05;
 			return true;
 		case OAPI_KEY_LBRACKET:
-			//panLong += 1.0 * RAD / panZoom;
 			centreLong -= 15.0 * RAD / double(centreZoom);
 			return true;
 		case OAPI_KEY_RBRACKET:
-			//panLong -= 1.0 * RAD / panZoom;
 			centreLong += 15.0 * RAD / double(centreZoom);
 			return true;
 		case OAPI_KEY_M:
@@ -892,6 +899,8 @@ void MapMFD::StoreStatus() const
 	}
 	MapMFDState.shipHistoryIndex = shipHistoryIndex;
 	MapMFDState.shipHistoryLength = shipHistoryLength;
+	MapMFDState.showVessels = showVessels;
+	MapMFDState.showHistory = showHistory;
 }
 
 void MapMFD::RecallStatus()
@@ -934,6 +943,8 @@ void MapMFD::RecallStatus()
 		}
 		shipHistoryIndex = MapMFDState.shipHistoryIndex;
 		shipHistoryLength = MapMFDState.shipHistoryLength;
+		showVessels = MapMFDState.showVessels;
+		showHistory = MapMFDState.shipHistory;
 	}
 	else if (resetCommand)
 	{
@@ -1060,7 +1071,14 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 {
 	double simt = oapiGetSimTime(); // sim time
 
-	//sprintf(oapiDebugString(), "In: %i, out: %i. SkipFactor: %i. Auto: %i", pointsInside, pointsOutside, int(58800 / defaultMapLinesAmount / centreZoom) + 1, int(autoResolution));
+	int textPos = 1;
+	char cbuf[100];
+	if (debugInformation)
+	{
+		sprintf(cbuf, "In: %i, out: %i. SkipFactor: %i. Auto: %i", pointsInside, pointsOutside, int(58800 / defaultMapLinesAmount / centreZoom) + 1, int(autoResolution));
+		skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+		textPos++;
+	}
 	pointsInside = 0;
 	pointsOutside = 0;
 
@@ -1072,9 +1090,6 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	strcat(mfdTitle, refName); // Add name of mapped body
 
 	Title(skp, mfdTitle);	// Draws the MFD title
-
-	int textPos = 1;
-	char cbuf[100];
 
 	// Draw track and zoom info
 	if (trackPosition != NOTRACK) sprintf(cbuf, "TRK");
@@ -1123,66 +1138,47 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	double sunAngleView = PI05; // just set it like this, and save computation power, although it really is 0.0024 degrees off for the Earth.
 	double firstLo, firstLa, previousLo, previousLa;
 	skp->SetPen(terminatorLine);
-	if (proj == EQUIRECTANGULAR)
+	for (int i = 0; i < sunCircleResolution; i++) // around entire circle
 	{
-		oapi::IVECTOR2 sunFill[sunCircleResolution + 4]; // normal resolution + (e.g.) upper left, upper right, terminatorPointRight, ..., terminatorPointLeft
+		double bearing = double(i) / double(sunCircleResolution) * PI2;
 
-		bool hasCrossedMapEdge
+		double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
+		double longPoint = normangle(sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint)));
 
-		for (int i = 0; i < sunCircleResolution; i++)
+		if (i != 0)
 		{
-			double bearing = double(i) / double(sunCircleResolution) * PI2;
-
-			double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
-			double longPoint = normangle(sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint)));
-
-			if (sunLat < 0.0) // overlaps South Pole
-			{
-				if (longPoint )
-			}
-			else // fills entire North Pole
-			{
-
-			}
-
-			//double transformedLat, transformedLong;
-			//TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
-
+			DrawLine(previousLo, previousLa, longPoint, latPoint, skp);
 		}
-	}
-	else // generic line around terminator
-	{
-		for (int i = 0; i < sunCircleResolution; i++) // around entire circle
+		else
 		{
-			double bearing = double(i) / double(sunCircleResolution) * PI2;
-
-			double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
-			double longPoint = normangle(sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint)));
-
-			//double transformedLat, transformedLong;
-			//TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
-
-			if (i != 0)
-			{
-				DrawLine(previousLo, previousLa, longPoint, latPoint, skp);
-			}
-			else
-			{
-				firstLa = latPoint;
-				firstLo = longPoint;
-			}
-
-			previousLo = longPoint;
-			previousLa = latPoint;
+			firstLa = latPoint;
+			firstLo = longPoint;
 		}
 
-		// Wrap around
-		DrawLine(previousLo, previousLa, firstLo, firstLa, skp);
+		previousLo = longPoint;
+		previousLa = latPoint;
 	}
+
+	DrawLine(previousLo, previousLa, firstLo, firstLa, skp); // wrap around
 	
+	//// Draw encircling shape / border for the map graphic
+	//skp->SetPen(gridLines);
+	//for (int i = 0; i < 360 / gridResolution; i++)
+	//{
+	//	int lo = -180 + i * gridResolution;
+	//	DrawLine(lo * RAD - centreLong, -PI05 - centreLat, lo * RAD + gridResolution * RAD - centreLong, -PI05 - centreLat, skp, false); // bottom
+	//	DrawLine(lo * RAD - centreLong, PI05 - centreLat, lo * RAD + gridResolution * RAD - centreLong, PI05 - centreLat, skp, false); // top
+	//}
+	//
+	//for (int i = 0; i < 180 / gridResolution; i++)
+	//{
+	//	int la = -90 + i * gridResolution;
+	//	DrawLine(-PI - centreLong, la * RAD - centreLat, -PI - centreLong, la * RAD + gridResolution * RAD - centreLat, skp, false); // left
+	//	DrawLine(PI - centreLong, la * RAD - centreLat, PI - centreLong, la * RAD + gridResolution * RAD - centreLat, skp, false); // right
+	//}
+
 	// Draw grid lines for map
 	skp->SetPen(gridLines);
-	double safetyValue = 0.9999;
 	// Longitude lines (vertical)
 	for (int lo = -180; lo < 180; lo += gridAngleSeparation)
 	{
@@ -1243,7 +1239,6 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			// Get total number of segments, so that we know how long to iterate
 			oapiReadScenario_nextline(vectorFile, line);
 			int totalSegments = atoi(line);
-			//sprintf(cacheMap[lineNr], line);
 			cacheMap[lineNr][0] = (float)totalSegments;
 			lineNr++;
 
@@ -1294,10 +1289,6 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 					if ((k % (skipLineFactor + 1)) == 0)
 					{
-
-						//if (abs(longitude) >= 180.0) longitude = longitude / abs(longitude) * longitude * 0.99999; // no overflow, please
-						//if (abs(latitude) >= 90.0) latitude = latitude / abs(latitude) * latitude * 0.99999; // no overflow, please
-
 						// We'll work in radians here
 						longitude *= RAD;
 						latitude *= RAD;
@@ -1484,7 +1475,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 	// Draw surface bases
 	skp->SetPen(baseBox);
-	skp->SetTextColor(0xF0F0F0);
+	skp->SetTextColor(DEFAULT_COLOURS.BASE);
 	for (int i = 0; i < (int)oapiGetBaseCount(ref); i++)
 	{
 		double baseLatitude, baseLongitude;
@@ -1496,7 +1487,10 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			oapiGetObjectName(baseRef, label, 30);
 			DrawFeature(baseLongitude, baseLatitude, 3, BOX, skp, label);
 		}
-		else DrawFeature(baseLongitude, baseLatitude, 3, BOX, skp, "");
+		else
+		{
+			DrawFeature(baseLongitude, baseLatitude, 3, BOX, skp, "");
+		}
 	}
 
 	// Draw vessels
@@ -1521,7 +1515,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 					// Finally, draw current position, so that it's on top.
 					skp->SetPen(targetPosition);
 					skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BOTTOM);
-					skp->SetTextColor(0x00FFFF);
+					skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 					DrawFeature(objLong, objLat, 10, CROSS, skp, nameString);
 				}
 			}
@@ -1582,34 +1576,43 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			// Finally, draw current position, so that it's on top.
 			skp->SetPen(targetPosition);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BOTTOM);
-			skp->SetTextColor(0x00FFFF);
+			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			DrawFeature(currentLongTarget, currentLatTarget, 10, CROSS, skp, nameString);
 			skp->SetPen(targetOrbitTrack);
 			DrawFeature(currentLongTarget, currentLatTarget, 6, RINGS, skp, "");
 			DrawFeature(currentLongTarget, currentLatTarget, 10, RINGS, skp, "");
 
 			char trueDist[20], orthoDist[20];
-			// Find true distance to input coordinate
-			VECTOR3 coordPos, vesselPos;
-			v->GetRelativePos(ref, vesselPos); // first get vector to planet centre.
-			vesselPos = Ecl2Equ(vesselPos); // then convert to equatorial.
-			double coordRadius = refRad + oapiSurfaceElevation(ref, currentLongTarget, currentLatTarget); // distance to centre of planet from coordinate (adding surface elevation).
-			double rotationAngle = oapiGetPlanetCurrentRotation(ref); // get the angle to add.
-			coordPos = _V(cos(currentLongTarget + rotationAngle) * cos(currentLatTarget), sin(currentLatTarget), sin(currentLongTarget + rotationAngle) * cos(currentLatTarget)) * coordRadius;
-			FormatValue(trueDist, 20, length(vesselPos - coordPos));
+			// Find true distance to target object
+			VECTOR3 tgtPos;
+			v->GetRelativePos(targets[i], tgtPos);
+			FormatValue(trueDist, 20, length(tgtPos));
 
-			// Find ground distance. Luckily, that is easier.
+			// Find ground distance.
 			FormatValue(orthoDist, 20, oapiOrthodome(currentLongTarget, currentLatTarget, currentLong, currentLat)* refRad);
 
 			// And also remember to draw target info
 			char altStr[20];
 			FormatValue(altStr, 20, currentRadTarget - refRad);
-			sprintf(cbuf, "TGT: %s [%s, Alt%s, Dst%s(%s)]", nameString, GetCoordinateString(currentLongTarget, currentLatTarget), altStr, trueDist, orthoDist + 1); // FormatValue returns an annoying space in the beginning.
 			skp->SetFont(configFont);
-			skp->SetTextColor(0x00FFFF);
+			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
-			skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
-			infoLinesDrawn++;
+			sprintf(cbuf, "TGT: %s [%s, Alt%s, Dst%s(%s)]", nameString, GetCoordinateString(currentLongTarget, currentLatTarget), altStr, trueDist, orthoDist + 1); // FormatValue returns an annoying space in the beginning.
+			if (int(skp->GetTextWidth(cbuf)) > W) // if text too wide to fit display
+			{
+				// We print from the bottom, so last part first
+				sprintf(cbuf, "  Alt%s, Dst%s(%s)]", altStr, trueDist, orthoDist + 1);
+				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				infoLinesDrawn++;
+				sprintf(cbuf, "TGT: %s [%s,", nameString, GetCoordinateString(currentLongTarget, currentLatTarget));
+				skp->Text(textDX, textDY* (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				infoLinesDrawn++;
+			}
+			else
+			{
+				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				infoLinesDrawn++;
+			}
 		}
 		else if (type == OBJTP_SURFBASE)
 		{
@@ -1624,9 +1627,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			VECTOR3 coordPos, vesselPos;
 			v->GetRelativePos(ref, vesselPos); // first get vector to planet centre.
 			vesselPos = Ecl2Equ(vesselPos); // then convert to equatorial.
-			double coordRadius = refRad + oapiSurfaceElevation(ref, longi, lati); // distance to centre of planet from coordinate (adding surface elevation).
-			double rotationAngle = oapiGetPlanetCurrentRotation(ref); // get the angle to add.
-			coordPos = _V(cos(longi + rotationAngle) * cos(lati), sin(lati), sin(longi + rotationAngle) * cos(lati)) * coordRadius;
+			coordPos = Coord2Vector(longi, lati);
 			FormatValue(trueDist, 20, length(vesselPos - coordPos));
 
 			// Find ground distance. Luckily, that is easier.
@@ -1639,13 +1640,25 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			// And also remember to draw target info
 			char nameStr[20];
 			oapiGetObjectName(targets[i], nameStr, 20);
-			sprintf(cbuf, "BSE: %s [%s, Dst%s(%s), Brg %05.1f\u00B0]", nameStr, GetCoordinateString(longi, lati), trueDist, orthoDist + 1, baseBearing * DEG);
-			//sprintf(cbuf, "TGT: %s [ %s, Alt: %s]", "basibas", GetCoordinateString(longi, lati), "altialt");
 			skp->SetFont(configFont);
-			skp->SetTextColor(0x00FFFF);
+			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
-			skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
-			infoLinesDrawn++;
+			sprintf(cbuf, "BSE: %s [%s, Dst%s(%s), Brg %05.1f\u00B0]", nameStr, GetCoordinateString(longi, lati), trueDist, orthoDist + 1, baseBearing * DEG);
+			if (int(skp->GetTextWidth(cbuf)) > W)
+			{
+				// Draw from the bottom, so last part first
+				sprintf(cbuf, "  Dst%s(%s), Brg %05.1f\u00B0]", trueDist, orthoDist + 1, baseBearing* DEG);
+				skp->Text(textDX, textDY* (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				infoLinesDrawn++;
+				sprintf(cbuf, "BSE: %s [%s,", nameStr, GetCoordinateString(longi, lati));
+				skp->Text(textDX, textDY* (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				infoLinesDrawn++;
+			}
+			else
+			{
+				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				infoLinesDrawn++;
+			}
 		}
 		else if (targets[i] == NULL) // user specified coordinate
 		{
@@ -1665,9 +1678,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			VECTOR3 coordPos, vesselPos;
 			v->GetRelativePos(ref, vesselPos); // first get vector to planet centre.
 			vesselPos = Ecl2Equ(vesselPos); // then convert to equatorial.
-			double coordRadius = refRad + oapiSurfaceElevation(ref, longi, lati); // distance to centre of planet from coordinate (adding surface elevation).
-			double rotationAngle = oapiGetPlanetCurrentRotation(ref); // get the angle to add.
-			coordPos = _V(cos(longi + rotationAngle) * cos(lati), sin(lati), sin(longi + rotationAngle) * cos(lati)) * coordRadius;
+			coordPos = Coord2Vector(longi, lati); // get the vector from centre to coordinate
 			FormatValue(trueDist, 20, length(vesselPos - coordPos));
 
 			// Find ground distance. Luckily, this is easier.
@@ -1680,7 +1691,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			// Write info
 			sprintf(cbuf, "COOR: [%s, Dst%s(%s), Brg %05.1f\u00B0]", GetCoordinateString(longi, lati), trueDist, orthoDist + 1, baseBearing * DEG);
 			skp->SetFont(configFont);
-			skp->SetTextColor(0x00FFFF);
+			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
 			skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 			infoLinesDrawn++;
@@ -1688,7 +1699,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	}
 
 	// Draw ship historic track, but only if in ground track view
-	if (orbitTrackGround)
+	if (orbitTrackGround && showHistory)
 	{
 		if (shipHistoryLength == 0) // first fill with one value
 		{
@@ -1745,7 +1756,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	{
 		double apoLong, apoLat, apoSpeed;
 		GetEquPosInXSeconds(prm.ApT, el, prm, currentLong, &apoLong, &apoLat, &apoSpeed);
-		skp->SetTextColor(0x00FF00);
+		skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
 		DrawFeature(apoLong, apoLat, 5, BOX, skp, "Ap");
 	}
 
@@ -1754,7 +1765,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 		double periLong, periLat, periSpeed;
 		GetEquPosInXSeconds(prm.PeT, el, prm, currentLong, &periLong, &periLat, &periSpeed);
 		if (prm.PeT < 0.0) sprintf(oapiDebugString(), "Warning, we're plotting perigee, but it has occured! Debug %.2f", simt);
-		skp->SetTextColor(0x00FF00);
+		skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
 		DrawFeature(periLong, periLat, 5, BOX, skp, "Pe");
 	}
 
@@ -1839,7 +1850,6 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 				int colIntentsity = 128 + int((elevation - currentElevation) / metrePerColourStep);
 				if (colIntentsity < 0) colIntentsity = 0;
 				else if (colIntentsity > 255) colIntentsity = 255;
-				sprintf(oapiDebugString(), "colInt: %i", colIntentsity);
 				DWORD elevColour = oapiGetColour(colIntentsity, colIntentsity, colIntentsity);
 
 
@@ -1886,18 +1896,31 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	// Fianlly, draw current position, so that it's on top.
 	skp->SetPen(mainPosition);
 	skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BOTTOM);
-	skp->SetTextColor(0x00FF00);
+	skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
 	DrawFeature(currentLong, currentLat, 10, CROSS, skp, v->GetName());
 
 	// And also remember to draw our own info
 	char altStr[20];
 	FormatValue(altStr, 20, currentRad - refRad);
-	sprintf(cbuf, "SHP: %s [%s, Alt%s, Crs %05.1f\u00B0]", v->GetName(), GetCoordinateString(currentLong, currentLat), altStr, courseDirection * DEG);
 	skp->SetFont(configFont);
-	skp->SetTextColor(0x00FF00);
-	skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);	
-	skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
-	infoLinesDrawn++;
+	skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
+	skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
+	sprintf(cbuf, "SHP: %s [%s, Alt%s, Crs %05.1f\u00B0]", v->GetName(), GetCoordinateString(currentLong, currentLat), altStr, courseDirection * DEG);
+	if (int(skp->GetTextWidth(cbuf)) > W) // if text too wide to fit display
+	{
+		// We draw from the bottom, so print last part first
+		sprintf(cbuf, "  Alt%s, Crs %05.1f\u00B0]", altStr, courseDirection * DEG);
+		skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+		infoLinesDrawn++;
+		sprintf(cbuf, "SHP: %s [%s,", v->GetName(), GetCoordinateString(currentLong, currentLat));
+		skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+		infoLinesDrawn++;
+	}
+	else
+	{
+		skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+		infoLinesDrawn++;
+	}
 }
 
 void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
@@ -1908,8 +1931,8 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	Title(skp, mfdTitle); // Draws the MFD title
 
 	int textX0 = W / 80;
-	int textY0 = H / 20 * 2;
 	int dY = H / 16;
+	int textY0 = H / 20 * 2 - currentTopListed * dY;
 	int secondRowIndent = 60;
 
 	char cbuf[100];
@@ -1932,6 +1955,14 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	if (showVessels) sprintf(cbuf, "On");
 	else sprintf(cbuf, "Off");
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGSHOWVESSELS) * dY, cbuf, strlen(cbuf));
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track mode, so indicate that by graying out if not in that
+	sprintf(cbuf, "Display history track");
+	skp->Text(textX0, textY0 + int(CONFIGSHOWHISTORY) * dY, cbuf, strlen(cbuf));
+	if (showHistory) sprintf(cbuf, "On");
+	else sprintf(cbuf, "Off");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGSHOWHISTORY) * dY, cbuf, strlen(cbuf));
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
 
 	sprintf(cbuf, "Projection");
 	skp->Text(textX0, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
@@ -2029,7 +2060,9 @@ void MapMFD::ReferenceListScreen(oapi::Sketchpad* skp)
 	if (updateReferenceCache) BuildReferenceCache(); // create list if it doesn't already exist.
 
 	// Finally print list in sorted order
+
 	int lineNumber = -currentReferenceTopListed;
+
 	for (int i = 0; i < totalPlanets; i++)
 	{
 		sprintf(cbuf, sortedPlanetsCache[i].name);
@@ -2082,7 +2115,7 @@ void MapMFD::TargetListScreen(oapi::Sketchpad* skp)
 		{
 			OBJHANDLE objectHandle = oapiGetBaseByIndex(ref, i);
 			oapiGetObjectName(objectHandle, cbuf, 20);
-			if (ObjectAlreadyInTarget(objectHandle)) skp->SetTextColor(0x00FFFF);
+			if (ObjectAlreadyInTarget(objectHandle)) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
 			skp->SetTextColor(defaultColour);
 			lineNumber++;
@@ -2103,7 +2136,7 @@ void MapMFD::TargetListScreen(oapi::Sketchpad* skp)
 			if (ves->GetSurfaceRef() == ref)
 			{
 				oapiGetObjectName(listVessel, cbuf, 20);
-				if (ObjectAlreadyInTarget(listVessel)) skp->SetTextColor(0x00FFFF);
+				if (ObjectAlreadyInTarget(listVessel)) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 				skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
 				skp->SetTextColor(defaultColour);
 				lineNumber++;
@@ -2129,7 +2162,7 @@ void MapMFD::TargetListScreen(oapi::Sketchpad* skp)
 				{
 
 					sprintf(cbuf, sortedPlanetsCache[i].moonName[k]);
-					if (ObjectAlreadyInTarget(sortedPlanetsCache[i].moonHandle[k])) skp->SetTextColor(0x00FFFF);
+					if (ObjectAlreadyInTarget(sortedPlanetsCache[i].moonHandle[k])) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 					skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
 					skp->SetTextColor(defaultColour);
 					lineNumber++;
@@ -2380,12 +2413,12 @@ bool MapMFD::DrawFeature(double longitude, double latitude, int size, MAPFEATURE
 	{
 	case BOX:
 		skp->Rectangle(pxX - size, pxY - size, pxX + size, pxY + size);
-		skp->Text(pxX, pxY, label, strlen(label));
+		if (strlen(label) > 0) skp->Text(pxX, pxY, label, strlen(label));
 		return true;
 	case CROSS:
 		skp->Line(pxX - size, pxY, pxX + size, pxY);
 		skp->Line(pxX, pxY - size, pxX, pxY + size);
-		skp->Text(pxX, pxY, label, strlen(label));
+		if (strlen(label) > 0) skp->Text(pxX, pxY, label, strlen(label));
 		return true;
 	case RINGS:
 		skp->Ellipse(pxX - size, pxY - size, pxX + size, pxY + size);
@@ -2662,6 +2695,14 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 			transLong = (k0)*sin(-theta);
 			transLat = -(k0)*cos(theta);
 		}
+
+		if (!(k0 <= 0.0 && -PI < k0))
+		{
+			// If latitude and centreLat are equal (eg. in tracking mode), we get k0 undefined, probably from floating point error acos(x > 1.0). Then set manually to 0,0, which is correct value in such cases.
+			transLong = 0.0;
+			transLat = 0.0;
+		}
+
 		break;
 	case LAMBERTAZIMUTHAL: // done
 		// https://mathworld.wolfram.com/LambertAzimuthalEqual-AreaProjection.html
@@ -2930,5 +2971,13 @@ inline VECTOR3 MapMFD::Ecl2Equ(VECTOR3 Ecl)
 	oapiGetPlanetObliquityMatrix(ref, &rot);
 	VECTOR3 Equ = tmul(rot, Ecl);
 	return Equ;
+}
+
+// Gives the equatorial frame vector from reference centre to a coordinate. Includes surface elevation.
+inline VECTOR3 MapMFD::Coord2Vector(double longitude, double latitude)
+{
+	double coordRadius = refRad + oapiSurfaceElevation(ref, longitude, latitude); // distance to centre of planet from coordinate (adding surface elevation).
+	double rotationAngle = oapiGetPlanetCurrentRotation(ref); // get the angle to add.
+	return _V(cos(longitude + rotationAngle) * cos(latitude), sin(latitude), sin(longitude + rotationAngle) * cos(latitude)) * coordRadius;
 }
 

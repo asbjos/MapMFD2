@@ -1,18 +1,23 @@
 #pragma once
 
-//#include <fstream>
-#include <iostream>
-#include <string>
+/* 
+Header file for MapMFD2 addon for Orbiter Space Flight Simulator 2016.
+Addon by Asbjørn 'asbjos' Krüger, 2020.
+
+This source code is released under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
+For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
+*/
 
 enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, TRANSVERSEMERCATOR, EQUALEARTH, MOLLWEIDE, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, CASSINI, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
-enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGPROJECTION, CONFIGFLIPPOLE, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
+enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGSHOWHISTORY, CONFIGPROJECTION, CONFIGFLIPPOLE, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
-enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1};
+enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1}; // set EXPANDNONE to -1, so that we can do a >= 0 check to see if something is expanded
 
 const int GROUND_TRACK_ITERATION_MAX_STEPS = int(2e4); // 2e4 is arbitrary max limit of what I'll allow. If you want a longer plot, there's no problem to increase time delta in config
 const int GROUND_TRACK_HISTORY_SIZE = int(1e3); // Number of datapoints recorded to position history.
 const int MAX_ZOOM = 256; // should be power of 2
+static char MFD_NAME[10] = "Map2";
 
 struct
 {
@@ -26,7 +31,23 @@ struct
 	int VIEW_CIRCLE_RESOLUTION = 90;
 	bool ELEVATION_RADAR = false;
 	bool SHOW_VESSELS = false;
+	bool SHOW_HISTORY = true;
 } DEFAULT_VALUES;
+
+struct
+{
+	DWORD COAST = 0xFF8080;
+	DWORD CONTOUR = 0x0070C0;
+	DWORD MAINTRACK = 0x00FF00;
+	DWORD MAINTRACKHISTORY = 0x337F33;
+	DWORD TARGETTRACK = 0x00FFFF;
+	DWORD GRID = 0x505050;
+	DWORD BASE = 0xF0F0F0;
+	DWORD SUNFILL = 0x303030;
+	DWORD TERMINATOR = 0x13B8FD; // is normally 0xC0C0C0 if with fill.
+	DWORD MAINVIEW = 0x40A040;
+	DWORD TARGETVIEW = 0x00A0A0;
+} DEFAULT_COLOURS;
 
 typedef struct ReferenceObjectType {
 	int index;
@@ -92,6 +113,7 @@ public:
 	double TrA2MnA(double TrA, double Ecc);
 	double EccentricAnomaly(double ecc, double TrA);
 	VECTOR3 Ecl2Equ(VECTOR3 Ecl);
+	VECTOR3 Coord2Vector(double longitude, double latitude);
 
 	void myStrncpy(char* writeTo, const char* readFrom, int len);
 
@@ -106,6 +128,7 @@ private:
 
 	bool configScreen = false;
 	CONFIGSELECT configSelection = CONFIGSELECT(0); // initialise to first entry
+	int currentTopListed = 0;
 
 	bool referenceListScreen = false;
 	bool targetListScreen = false;
@@ -149,8 +172,8 @@ private:
 	TRACKMODE trackPosition = NOTRACK;
 
 	bool showVessels = DEFAULT_VALUES.SHOW_VESSELS;
+	bool showHistory = DEFAULT_VALUES.SHOW_HISTORY;
 
-	//char cacheMap[100000][35];
 	float cacheMap[100000][2];
 	bool updateCache = true; // never change this other than when caching or changing reference. If memory is lost, the update call is also reactivated.
 	bool coastMap, mapExists;
@@ -158,10 +181,29 @@ private:
 	double shipHistory[GROUND_TRACK_HISTORY_SIZE][3]; // record ship coordinates, and last is time stamp
 	int shipHistoryIndex = 0; // index to record to in shipHistory
 	int shipHistoryLength = 0; // history record length
+
+	// Create pens and brushes
+	oapi::Pen* coastLines;
+	oapi::Pen* contourLines;
+	oapi::Pen* mainOrbitTrack;
+	oapi::Pen* mainOrbitTrackHistory;
+	oapi::Pen* mainPosition;
+	oapi::Pen* targetOrbitTrack;
+	oapi::Pen* targetPosition;
+	oapi::Pen* gridLines;
+	oapi::Pen* baseBox;
+	oapi::Brush* sunlitSide;
+	oapi::Pen* terminatorLine;
+	oapi::Pen* groundCoverageLine;
+	oapi::Pen* targetGroundCoverageLine;
+	oapi::Brush* sunIcon;
+	oapi::Font* defaultFont;
+	oapi::Font* configFont;
+	oapi::Font* mapObjectFont;
 };
 
-bool resetCommand = false; // inform user and RecallStatus that we want to reset
-bool debugInformation = false;
+static bool resetCommand = false; // inform user and RecallStatus that we want to reset
+static bool debugInformation = false;
 
 // Static memory for Store/Recall Status
 struct
@@ -201,33 +243,14 @@ struct
 	int shipHistoryLength; // new
 
 	bool showVessels;
+	bool showHistory;
 } MapMFDState;
 
-// Create pens and brushes
-oapi::Pen* coastLines;
-oapi::Pen* contourLines;
-oapi::Pen* mainOrbitTrack;
-oapi::Pen* mainOrbitTrackHistory;
-oapi::Pen* mainPosition;
-oapi::Pen* targetOrbitTrack;
-oapi::Pen* targetPosition;
-oapi::Pen* gridLines;
-oapi::Pen* baseBox;
-oapi::Brush* sunlitSide;
-oapi::Pen* terminatorLine;
-oapi::Pen* groundCoverageLine;
-oapi::Pen* targetGroundCoverageLine;
-oapi::Brush* sunIcon;
-
 // Text pens and fonts
-DWORD configTextColour = 0xFFFFFF;
-DWORD inactiveConfigTextColour = 0x707070;
-oapi::Font* defaultFont;
-oapi::Font* configFont;
-oapi::Font* mapObjectFont;
+static DWORD configTextColour = 0xFFFFFF;
+static DWORD inactiveConfigTextColour = 0x707070;
 
 int g_MFDmode; // identifier for new MFD mode
-//HINSTANCE hInst;
 
 // ==============================================================
 // MFD class implementation
@@ -237,11 +260,6 @@ MapMFD::MapMFD(DWORD w, DWORD h, VESSEL* vessel)
 	: MFD2(w, h, vessel)
 {
 	SetNewReference(vessel->GetSurfaceRef());
-
-	char cbuf[30], cbuff[30];
-	oapiGetObjectName(ref, cbuff, 30);
-	FormatValue(cbuf, 30, refMu);
-	oapiWriteLogV("Debug, ref: %s, mu: %s, rad: %.2f km", cbuff, cbuf + 1, refRad / 1e3);
 
 	v = vessel;
 
@@ -253,23 +271,22 @@ MapMFD::MapMFD(DWORD w, DWORD h, VESSEL* vessel)
 
 	defaultFont = oapiCreateFont(H / 30, false, "Fixed", FONT_NORMAL, 0);
 	configFont = oapiCreateFont(H / 25, true, "Sans", FONT_NORMAL, 0);
-	mapObjectFont = oapiCreateFont(H / 50, true, "Sans", FONT_NORMAL, 0);
+	mapObjectFont = oapiCreateFont(12, true, "Sans", FONT_NORMAL, 0); // set forced to 10, so that text is also visible on small MFD sizes
 
-	coastLines = oapiCreatePen(1, 1, 0xFF8080);
-	contourLines = oapiCreatePen(1, 1, 0x0070C0);
-	mainOrbitTrack = oapiCreatePen(1, 1, 0x00FF00);
-	mainOrbitTrackHistory = oapiCreatePen(1, 1, 0x337F33);
-	mainPosition = oapiCreatePen(1, 3, 0x00FF00);
-	targetOrbitTrack = oapiCreatePen(1, 1, 0x00FFFF);
-	targetPosition = oapiCreatePen(1, 3, 0x00FFFF);
-	gridLines = oapiCreatePen(1, 1, 0x505050);
-	baseBox = oapiCreatePen(1, 1, 0xF0F0F0);
-	sunlitSide = oapiCreateBrush(0x303030);
-	//terminatorLine = oapiCreatePen(1, 1, 0xC0C0C0);
-	terminatorLine = oapiCreatePen(1, 1, 0x13B8FD);
-	groundCoverageLine = oapiCreatePen(1, 1, 0x40A040);
-	targetGroundCoverageLine = oapiCreatePen(1, 1, 0x00A0A0);
-	sunIcon = oapiCreateBrush(0x13B8FD);
+	coastLines = oapiCreatePen(1, 1, DEFAULT_COLOURS.COAST);
+	contourLines = oapiCreatePen(1, 1, DEFAULT_COLOURS.CONTOUR);
+	mainOrbitTrack = oapiCreatePen(1, 1, DEFAULT_COLOURS.MAINTRACK);
+	mainOrbitTrackHistory = oapiCreatePen(1, 1, DEFAULT_COLOURS.MAINTRACKHISTORY);
+	mainPosition = oapiCreatePen(1, 3, DEFAULT_COLOURS.MAINTRACK);
+	targetOrbitTrack = oapiCreatePen(1, 1, DEFAULT_COLOURS.TARGETTRACK);
+	targetPosition = oapiCreatePen(1, 3, DEFAULT_COLOURS.TARGETTRACK);
+	gridLines = oapiCreatePen(1, 1, DEFAULT_COLOURS.GRID);
+	baseBox = oapiCreatePen(1, 1, DEFAULT_COLOURS.BASE);
+	sunlitSide = oapiCreateBrush(DEFAULT_COLOURS.SUNFILL);
+	terminatorLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.TERMINATOR);
+	groundCoverageLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.MAINVIEW);
+	targetGroundCoverageLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.TARGETVIEW);
+	sunIcon = oapiCreateBrush(DEFAULT_COLOURS.TERMINATOR);
 }
 
 // Destructor
@@ -277,6 +294,7 @@ MapMFD::~MapMFD()
 {
 	oapiReleaseFont(configFont);
 	oapiReleaseFont(mapObjectFont);
+	oapiReleaseFont(defaultFont);
 
 	// Release pens
 	oapiReleasePen(coastLines);
@@ -293,8 +311,6 @@ MapMFD::~MapMFD()
 	oapiReleasePen(groundCoverageLine);
 	oapiReleasePen(targetGroundCoverageLine);
 	oapiReleaseBrush(sunIcon);
-
-	oapiWriteLog("MapMFD2 Destructing");
 }
 
 
@@ -309,7 +325,6 @@ char* MapMFD::ButtonLabel(int bt)
 	static char* label[NUMBER_BUTTONS_DEFAULT] = { "REF", "TGT", "ZM-", "ZM+", "TRK", "CFG", "UP", "DN", "<", ">", "TG-", "PRJ" };
 	static char* labelTrkLon[NUMBER_BUTTONS_DEFAULT] = { "REF", "TGT", "ZM-", "ZM+", "TRK", "CFG", "UP", "DN", " ", " ", "TG-", "PRJ" };
 	static char* labelTrkLonLat[NUMBER_BUTTONS_DEFAULT] = { "REF", "TGT", "ZM-", "ZM+", "TRK", "CFG", " ", " ", " ", " ", "TG-", "PRJ" };
-	//static char* labelSecondary[NUMBER_BUTTONS_DEFAULT] = { "REF", "TGT", "ZM-", "ZM+", "TRK", "PG", " ", " ", "CFG", "CLH", "CLT", "PRJ" };
 
 	static char* labelConfig[NUMBER_BUTTONS_CONFIG] = { "UP", "DN", "MOD", "OK", "DEF" };
 
@@ -394,22 +409,6 @@ int MapMFD::ButtonMenu(const MFDBUTTONMENU** menu) const
 		{"Toggle projection", 0, 'P'}
 	};
 
-	//// Secondary buttons
-	//static const MFDBUTTONMENU defaultMnuSecondary[NUMBER_BUTTONS_DEFAULT] = {
-	//	{"Map reference", 0, 'R'},
-	//	{"Select target", 0, 'T'},
-	//	{"Zoom out", 0, 'X'},
-	//	{"Zoom in", 0, 'Z'},
-	//	{"Track mode on/off", 0, 'K'},
-	//	{"Primary buttons", 0, 'D'},
-	//	{"Reference list screen", 0, '1'},
-	//	{"Target list screen", 0, '2'},
-	//	{"Config screen", 0, 'C'},
-	//	{"Clear history track", 0, '3'},
-	//	{"Clear all targets", 0, '4'},
-	//	{"Toggle projection", 0, 'P'}
-	//};
-
 	// The menu descriptions in config view
 	static const MFDBUTTONMENU configMnu[NUMBER_BUTTONS_CONFIG] = {
 		{"Move selection up", 0, '-'},
@@ -492,11 +491,24 @@ int MapMFD::MsgProc(UINT msg, UINT mfd, WPARAM wparam, LPARAM lparam)
 // ==============================================================
 // API interface
 
+void ReadUserColour(FILEHANDLE cfgFile, char *label, DWORD *colour)
+{
+	char colourString[10];
+	bool couldRead = oapiReadItem_string(cfgFile, label, colourString);
+	if (couldRead && strlen(colourString) == 6)
+	{
+		*colour = strtoul(colourString, NULL, 16);
+	}
+	else
+	{
+		oapiWriteLogV("MapMFD2 ERROR! Could not find/understand %s colour in config file!", label);
+	}
+}
+
 DLLCLBK void InitModule(HINSTANCE hDLL)
 {
-	static char* name = "Map2";   // MFD mode name
 	MFDMODESPECEX spec;
-	spec.name = name;
+	spec.name = MFD_NAME;
 	spec.key = OAPI_KEY_M;                // MFD mode selection key
 	spec.context = NULL;
 	spec.msgproc = MapMFD::MsgProc;  // MFD mode callback function
@@ -516,6 +528,20 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	oapiReadItem_int(cfgFile, "DefViewCircleResolution", DEFAULT_VALUES.VIEW_CIRCLE_RESOLUTION);
 	oapiReadItem_bool(cfgFile, "DefShowAltitudeRadar", DEFAULT_VALUES.ELEVATION_RADAR);
 	oapiReadItem_bool(cfgFile, "DefShowOtherVessels", DEFAULT_VALUES.SHOW_VESSELS);
+	oapiReadItem_bool(cfgFile, "DefShowHistoryTrack", DEFAULT_VALUES.SHOW_HISTORY);
+
+	// Get colours
+	ReadUserColour(cfgFile, "ColourCoast", &DEFAULT_COLOURS.COAST);
+	ReadUserColour(cfgFile, "ColourContour", &DEFAULT_COLOURS.CONTOUR);
+	ReadUserColour(cfgFile, "ColourMainTrack", &DEFAULT_COLOURS.MAINTRACK);
+	ReadUserColour(cfgFile, "ColourMainTrackHistory", &DEFAULT_COLOURS.MAINTRACKHISTORY);
+	ReadUserColour(cfgFile, "ColourTargetTrack", &DEFAULT_COLOURS.TARGETTRACK);
+	ReadUserColour(cfgFile, "ColourGrid", &DEFAULT_COLOURS.GRID);
+	ReadUserColour(cfgFile, "ColourBase", &DEFAULT_COLOURS.BASE);
+	ReadUserColour(cfgFile, "ColourSunFill", &DEFAULT_COLOURS.SUNFILL);
+	ReadUserColour(cfgFile, "ColourTerminator", &DEFAULT_COLOURS.TERMINATOR);
+	ReadUserColour(cfgFile, "ColourMainView", &DEFAULT_COLOURS.MAINVIEW);
+	ReadUserColour(cfgFile, "ColourTargetView", &DEFAULT_COLOURS.TARGETVIEW);
 
 	oapiCloseFile(cfgFile, FILE_IN);
 }
@@ -526,7 +552,6 @@ DLLCLBK void ExitModule(HINSTANCE hDLL)
 	oapiUnregisterMFDMode(g_MFDmode);
 
 	resetCommand = true; // tell MFD that we have locked Orbiter, and don't want to recall from RecallStatus
-	oapiWriteLog("MapMFD2 Exiting");
 }
 
 // Other
