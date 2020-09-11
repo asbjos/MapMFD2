@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 
 /* 
 Header file for MapMFD2 addon for Orbiter Space Flight Simulator 2016.
@@ -10,7 +11,7 @@ For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 
 enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, TRANSVERSEMERCATOR, EQUALEARTH, MOLLWEIDE, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, CASSINI, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
-enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGSHOWHISTORY, CONFIGPROJECTION, CONFIGFLIPPOLE, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
+enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION, CONFIGFLIPPOLE, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
 enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1}; // set EXPANDNONE to -1, so that we can do a >= 0 check to see if something is expanded
 
@@ -32,7 +33,11 @@ struct
 	bool ELEVATION_RADAR = false;
 	bool SHOW_VESSELS = false;
 	bool SHOW_HISTORY = true;
+	double DRAW_SPECIFIC_ALT = 0.0; // off
+	int BLOCK_PROJECTIONS[int(LASTENTRYPROJECTION)]; // list of projection indices to block, initialise to block none (index -1 does not exist).
 } DEFAULT_VALUES;
+
+// Initialise projection list
 
 struct
 {
@@ -44,7 +49,8 @@ struct
 	DWORD GRID = 0x505050;
 	DWORD BASE = 0xF0F0F0;
 	DWORD SUNFILL = 0x303030;
-	DWORD TERMINATOR = 0x13B8FD; // is normally 0xC0C0C0 if with fill.
+	DWORD TERMINATOR = 0xC0C0C0;
+	DWORD SUNICON = 0x13B8FD;
 	DWORD MAINVIEW = 0x40A040;
 	DWORD TARGETVIEW = 0x00A0A0;
 } DEFAULT_COLOURS;
@@ -84,6 +90,14 @@ public:
 	void ReferenceListScreen(oapi::Sketchpad* skp);
 	void TargetListScreen(oapi::Sketchpad* skp);
 
+	// Map screen functions. Used to clean up the MapScreen function.
+	void MakeSunLight(oapi::Sketchpad* skp);
+	void MakeGridLines(oapi::Sketchpad* skp);
+	void MakeMap(oapi::Sketchpad* skp, const char* refName, int* txtPos);
+	void MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp);
+	void MakeTargets(oapi::Sketchpad* skp, double currentLong, double currentLat, int *infoLinesDrwn);
+	void MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLat, double currentRad, int* infoLinesDrwn);
+
 	void BuildReferenceCache(void);
 	void SetNewReference(OBJHANDLE hRef);
 	bool AddOrRemoveTarget(OBJHANDLE hRef);
@@ -97,7 +111,7 @@ public:
 	char* GetProjectionName(void);
 	char* GetCoordinateString(double longitude, double latitude);
 
-	bool GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude, double *currentSpeed); // return false if altitude below surface
+	bool GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude); // return false if altitude below surface
 	void GetObjectEquPos(OBJHANDLE tgt, double* longitude, double* latitude, double *radius);
 	void GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* prm);
 
@@ -107,6 +121,7 @@ public:
 	bool SetGridSeparation(char* rstr);
 	bool SetGridResolution(char* rstr);
 	bool SetNumberOrbitsDisplayed(char* rstr);
+	bool SetSpecificAltitudeSelect(char* rstr);
 
 	// Some basic mathematical functions
 	double MnA2TrA(double MnA, double Ecc);
@@ -157,10 +172,11 @@ private:
 	bool autoResolution = true; // automatically control skipEveryNLines value
 	int defaultMapLinesAmount = DEFAULT_VALUES.LINES_AMOUNT; // used for autoResolution when desciding what the max map lines to display is
 	double orbitTrackAngleDelta = DEFAULT_VALUES.GROUNDTRACK_STEP; // TrA angle delta per track leg. Set to 0.01, 0.05, 0.1, 0.5, 1.0
-	bool orbitTrackGround = DEFAULT_VALUES.TRACK_MODE; // ground track mode. If false, set to orbit track mode.
+	bool orbitTrackGround = bool(DEFAULT_VALUES.TRACK_MODE); // ground track mode. If false, set to orbit track mode.
 	int viewCircleResolution = DEFAULT_VALUES.VIEW_CIRCLE_RESOLUTION; // number of segments in the view circle ("what is visible").
 	double orbitTrackOrbitsNumber = DEFAULT_VALUES.GROUNDTRACK_ORBITS; // number of orbits to show of ground track (limited by max 1e6 seconds).
 	bool displayElevationRadar = DEFAULT_VALUES.ELEVATION_RADAR; // wether to show elevation radar or not. It can be FPS hungry.
+	double drawSpecificAlt = DEFAULT_VALUES.DRAW_SPECIFIC_ALT; // if not 0.0, you can set a specific altitude to show where in orbit you are at that altitude. Uses same format as "Ap" and "Pe" drawing.
 
 	// Debug
 	int pointsOutside = 0;
@@ -193,12 +209,13 @@ private:
 	oapi::Pen* gridLines;
 	oapi::Pen* baseBox;
 	oapi::Brush* sunlitSide;
+	oapi::Brush* black; // used to plot darkness on sunlit side, always black
 	oapi::Pen* terminatorLine;
 	oapi::Pen* groundCoverageLine;
 	oapi::Pen* targetGroundCoverageLine;
 	oapi::Brush* sunIcon;
-	oapi::Font* defaultFont;
-	oapi::Font* configFont;
+	//oapi::Font* defaultFont;
+	//oapi::Font* configFont;
 	oapi::Font* mapObjectFont;
 };
 
@@ -231,7 +248,7 @@ struct
 	bool orbitTrackGround;
 	double orbitTrackOrbitsNumber; // new
 	bool displayElevationRadar; // new
-
+	double drawSpecificAlt;
 
 	double centreLat, centreLong;
 	int centreZoom;
@@ -269,8 +286,6 @@ MapMFD::MapMFD(DWORD w, DWORD h, VESSEL* vessel)
 	textDX = W / 80;
 	textDY = H / 20;
 
-	defaultFont = oapiCreateFont(H / 30, false, "Fixed", FONT_NORMAL, 0);
-	configFont = oapiCreateFont(H / 25, true, "Sans", FONT_NORMAL, 0);
 	mapObjectFont = oapiCreateFont(12, true, "Sans", FONT_NORMAL, 0); // set forced to 10, so that text is also visible on small MFD sizes
 
 	coastLines = oapiCreatePen(1, 1, DEFAULT_COLOURS.COAST);
@@ -283,18 +298,17 @@ MapMFD::MapMFD(DWORD w, DWORD h, VESSEL* vessel)
 	gridLines = oapiCreatePen(1, 1, DEFAULT_COLOURS.GRID);
 	baseBox = oapiCreatePen(1, 1, DEFAULT_COLOURS.BASE);
 	sunlitSide = oapiCreateBrush(DEFAULT_COLOURS.SUNFILL);
+	black = oapiCreateBrush(0x000000);
 	terminatorLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.TERMINATOR);
 	groundCoverageLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.MAINVIEW);
 	targetGroundCoverageLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.TARGETVIEW);
-	sunIcon = oapiCreateBrush(DEFAULT_COLOURS.TERMINATOR);
+	sunIcon = oapiCreateBrush(DEFAULT_COLOURS.SUNICON);
 }
 
 // Destructor
 MapMFD::~MapMFD()
 {
-	oapiReleaseFont(configFont);
 	oapiReleaseFont(mapObjectFont);
-	oapiReleaseFont(defaultFont);
 
 	// Release pens
 	oapiReleasePen(coastLines);
@@ -307,6 +321,7 @@ MapMFD::~MapMFD()
 	oapiReleasePen(gridLines);
 	oapiReleasePen(baseBox);
 	oapiReleaseBrush(sunlitSide);
+	oapiReleaseBrush(black);
 	oapiReleasePen(terminatorLine);
 	oapiReleasePen(groundCoverageLine);
 	oapiReleasePen(targetGroundCoverageLine);
@@ -318,7 +333,7 @@ MapMFD::~MapMFD()
 const int NUMBER_BUTTONS_DEFAULT = 12;
 const int NUMBER_BUTTONS_CONFIG = 5;
 const int NUMBER_BUTTONS_REFERENCE = 6;
-const int NUMBER_BUTTONS_TARGET = 6;
+const int NUMBER_BUTTONS_TARGET = 7;
 char* MapMFD::ButtonLabel(int bt)
 {
 	// The labels for the two buttons used by our MFD mode
@@ -329,7 +344,7 @@ char* MapMFD::ButtonLabel(int bt)
 	static char* labelConfig[NUMBER_BUTTONS_CONFIG] = { "UP", "DN", "MOD", "OK", "DEF" };
 
 	static char* labelReference[NUMBER_BUTTONS_REFERENCE] = { "UP", "DN", "MOD", "OK", "DEF", "TXT" };
-	static char* labelTarget[NUMBER_BUTTONS_TARGET] = { "UP", "DN", "MOD", "SEL", "BCK", "TXT" };
+	static char* labelTarget[NUMBER_BUTTONS_TARGET] = { "UP", "DN", "MOD", "SEL", "BCK", "TXT", "NEA" };
 
 	if (configScreen)
 	{
@@ -435,7 +450,8 @@ int MapMFD::ButtonMenu(const MFDBUTTONMENU** menu) const
 		{"Modify selected parameter", 0, 'M'},
 		{"Select", 0, 'S'},
 		{"Return to map", 0, 'O'},
-		{"Text input", 0, 'T'}
+		{"Text input", 0, 'T'},
+		{"Nearest object", 0, 'N'}
 	};
 
 	if (menu)
@@ -474,6 +490,8 @@ int MapMFD::ButtonMenu(const MFDBUTTONMENU** menu) const
 			return NUMBER_BUTTONS_DEFAULT; // all tracking modes all have same ammount of keys
 		}
 	}
+
+	return 0; // just in case we haven't returned until now
 }
 
 // MFD message parser
@@ -481,8 +499,7 @@ int MapMFD::MsgProc(UINT msg, UINT mfd, WPARAM wparam, LPARAM lparam)
 {
 	switch (msg) {
 	case OAPI_MSG_MFD_OPENED:
-		// Our new MFD mode has been selected, so we create the MFD and
-		// return a pointer to it.
+		// Our new MFD mode has been selected, so we create the MFD and return a pointer to it.
 		return (int)(new MapMFD(LOWORD(wparam), HIWORD(wparam), (VESSEL*)lparam));
 	}
 	return 0;
@@ -503,6 +520,41 @@ void ReadUserColour(FILEHANDLE cfgFile, char *label, DWORD *colour)
 	{
 		oapiWriteLogV("MapMFD2 ERROR! Could not find/understand %s colour in config file!", label);
 	}
+}
+
+char* GetSpecificProjectionName(int proj)
+{
+	// Write projection
+	switch (proj)
+	{
+	case EQUIRECTANGULAR:
+		return "Equirectangular";
+	case MILLER:
+		return "Miller";
+	case MERCATOR:
+		return "Mercator";
+	case TRANSVERSEMERCATOR:
+		return "Transverse Mercator";
+	case EQUALEARTH:
+		return "Equal Earth";
+	case MOLLWEIDE:
+		return "Mollweide";
+	case ORTELIUSOVAL:
+		return "Ortelius Oval";
+	case WINKELTRIPEL:
+		return "Winkel Tripel";
+	case RECTANGULARPOLYCONIC:
+		return "Rectangular Polyconic";
+	case AZIMUTHALEQUIDISTANT:
+		return "Azimuthal Equidistant";
+	case LAMBERTAZIMUTHAL:
+		return "Lambert Azimuthal Equal-area";
+	case CASSINI:
+		return "Cassini";
+	default:
+		return "ERROR";
+	}
+	return "ERROR";
 }
 
 DLLCLBK void InitModule(HINSTANCE hDLL)
@@ -529,6 +581,30 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	oapiReadItem_bool(cfgFile, "DefShowAltitudeRadar", DEFAULT_VALUES.ELEVATION_RADAR);
 	oapiReadItem_bool(cfgFile, "DefShowOtherVessels", DEFAULT_VALUES.SHOW_VESSELS);
 	oapiReadItem_bool(cfgFile, "DefShowHistoryTrack", DEFAULT_VALUES.SHOW_HISTORY);
+	oapiReadItem_float(cfgFile, "DefDrawSpecificAltitude", DEFAULT_VALUES.DRAW_SPECIFIC_ALT);
+
+	// Logic for disabling specific projections
+	char blockProjections[200];
+	oapiReadItem_string(cfgFile, "DisableSpecificProjections", blockProjections);
+	std::fill_n(DEFAULT_VALUES.BLOCK_PROJECTIONS, int(LASTENTRYPROJECTION), -1); // initalise array to -1 (don't block any)
+	char* comma = blockProjections;
+	int commaNr = 0;
+	while (comma != NULL && commaNr < int(LASTENTRYPROJECTION))
+	{
+		int blockedProjection = atoi(comma); // find first coming integer
+
+		if (blockedProjection >= 0 && blockedProjection < int(LASTENTRYPROJECTION)) // if valid index
+		{
+			DEFAULT_VALUES.BLOCK_PROJECTIONS[commaNr] = blockedProjection; // add to array of block list
+			oapiWriteLogV("MapMFD2: disabled %s (%i) projection", GetSpecificProjectionName(blockedProjection), blockedProjection); // tell user which projection is blocked
+		}
+
+		commaNr++; // update array index
+
+		char* nextComma = strchr(comma + 1, ',');
+		if (nextComma != NULL) comma = nextComma + 1;
+		else comma = NULL;
+	}
 
 	// Get colours
 	ReadUserColour(cfgFile, "ColourCoast", &DEFAULT_COLOURS.COAST);
@@ -540,6 +616,7 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	ReadUserColour(cfgFile, "ColourBase", &DEFAULT_COLOURS.BASE);
 	ReadUserColour(cfgFile, "ColourSunFill", &DEFAULT_COLOURS.SUNFILL);
 	ReadUserColour(cfgFile, "ColourTerminator", &DEFAULT_COLOURS.TERMINATOR);
+	ReadUserColour(cfgFile, "ColourSunIcon", &DEFAULT_COLOURS.SUNICON);
 	ReadUserColour(cfgFile, "ColourMainView", &DEFAULT_COLOURS.MAINVIEW);
 	ReadUserColour(cfgFile, "ColourTargetView", &DEFAULT_COLOURS.TARGETVIEW);
 
@@ -556,9 +633,9 @@ DLLCLBK void ExitModule(HINSTANCE hDLL)
 
 // Other
 
+// Because strncpy sucks, I have to make my own >:(
 void MapMFD::myStrncpy(char* writeTo, const char* readFrom, int len)
 {
-	// Because strncpy sucks, I have to make my own >:(
 	int i = 0;
 	while (i < len && readFrom[i] != '\0')
 	{

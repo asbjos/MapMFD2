@@ -2,7 +2,7 @@
 	Map MFD 2, a project by Asbjørn 'asbjos' Krüger, 2020.
 
 	The intention is to create a new and hopefully better Map MFD experience
-	than the default version in Orbiter Space Flight Simulator.
+	than the default version in Orbiter Space Flight Simulator 2016.
 
 	This will not and can not replace the original, but will hopefully be of use.
 
@@ -22,7 +22,6 @@
 
 #include "orbitersdk.h"
 #include "MapMFD2.h"
-
 
 bool MapMFD::Update(oapi::Sketchpad* skp)
 {
@@ -128,6 +127,10 @@ bool MapMFD::ConsumeButton(int bt, int event)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_T);
 		}
+		if (bt == 6)
+		{
+			return ConsumeKeyBuffered(OAPI_KEY_N);
+		}
 		else return false;
 	}
 	else
@@ -191,6 +194,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 	bool GridSeparation(void* id, char* str, void* data);
 	bool GridResolution(void* id, char* str, void* data);
 	bool NumberOrbitsDisplayed(void* id, char* str, void* data);
+	bool SpecificAltitudeSelection(void* id, char* str, void* data);
 
 	int entriesPerPage = 13; // for list displays
 
@@ -220,6 +224,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				return true;
 			case CONFIGSHOWVESSELS:
 				showVessels = !showVessels;
+				return true;
+			case CONFIGDRAWSPECIFICALT:
+				oapiOpenInputBox("Altitude (0 = off):", SpecificAltitudeSelection, 0, 20, (void*)this);
 				return true;
 			case CONFIGSHOWHISTORY:
 				showHistory = !showHistory;
@@ -293,6 +300,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				return true;
 			case CONFIGSHOWVESSELS:
 				showVessels = false;
+				return true;
+			case CONFIGDRAWSPECIFICALT:
+				drawSpecificAlt = 0.0;
 				return true;
 			case CONFIGSHOWHISTORY:
 				showHistory = true;
@@ -497,6 +507,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 					if (targetSelection > int(targetExpand) + numberTargetChoices - 3) // we're after the expanded list (e.g. selected Spacecraft after expanded Spaceports)
 					{
 						targetExpand = TARGETEXPANDMODES(targetSelection - (numberTargetChoices - 3));
+						targetSelection = int(targetExpand); // reset box to new parent, where we had our box. The label has moved, so move box too.
 					}
 					else // we're inside the expanded list
 					{
@@ -561,10 +572,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 						}
 					}
 				}
-				else
-				{
-					sprintf(oapiDebugString(), "ERROR! DEBUG! Vessel index was not valid! %.2f", oapiGetSimTime());
-				}
 			}
 			else if (targetExpand == EXPANDMOONS)
 			{
@@ -610,6 +617,83 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			targetListScreen = false;
 			InvalidateButtons();
 			return true;
+		case OAPI_KEY_N:
+			// Select nearest object in expanded list
+
+			double closestDistance;
+			closestDistance = 1e20; // "infinity"
+			OBJHANDLE closestObject;
+			closestObject = NULL;
+
+			switch (targetExpand)
+			{
+			case EXPANDSPACEPORTS:
+				for (int i = 0; i < oapiGetBaseCount(ref); i++)
+				{
+					OBJHANDLE surfBase = oapiGetBaseByIndex(ref, i);
+					VECTOR3 pos;
+					v->GetRelativePos(surfBase, pos);
+					if (length(pos) < closestDistance)
+					{
+						closestDistance = length(pos);
+						closestObject = surfBase;
+					}
+				}
+
+				if (oapiGetObjectType(closestObject) == OBJTP_SURFBASE) AddOrRemoveTarget(closestObject); // add or remove nearest object
+
+				return true;
+			case EXPANDSPACECRAFT:
+				for (int i = 0; i < (int)oapiGetVesselCount(); i++)
+				{
+					OBJHANDLE listVessel = oapiGetVesselByIndex(i);
+					VESSEL* ves = oapiGetVesselInterface(listVessel);
+					if (ves->GetSurfaceRef() == ref && listVessel != v->GetHandle())
+					{
+						VECTOR3 pos;
+						v->GetRelativePos(listVessel, pos);
+
+						if (length(pos) < closestDistance)
+						{
+							closestDistance = length(pos);
+							closestObject = listVessel;
+						}
+					}
+				}
+
+				if (oapiGetObjectType(closestObject) == OBJTP_VESSEL) AddOrRemoveTarget(closestObject);
+
+				return true;
+			case EXPANDMOONS:
+				for (int i = 0; i < totalPlanets; i++)
+				{
+					if (sortedPlanetsCache[i].handle == ref)
+					{
+						// We found our planet.
+						for (int j = 0; j < sortedPlanetsCache[i].moonCount; j++)
+						{
+							VECTOR3 pos;
+							v->GetRelativePos(sortedPlanetsCache[i].moonHandle[j], pos);
+							if (length(pos) < closestDistance)
+							{
+								closestDistance = length(pos);
+								closestObject = sortedPlanetsCache[i].moonHandle[j];
+							}
+						}
+
+						if (oapiGetObjectType(closestObject) == OBJTP_CBODY || oapiGetObjectType(closestObject) == OBJTP_PLANET) AddOrRemoveTarget(closestObject);;
+						
+						return true;
+					}
+				}
+
+				return true;
+			case EXPANDNONE:
+			default:
+				return false;
+			}
+
+			return true;
 		default:
 			return false;
 		}
@@ -652,10 +736,10 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			if (centreLat < -PI05) centreLat = -PI05;
 			return true;
 		case OAPI_KEY_LBRACKET:
-			centreLong -= 15.0 * RAD / double(centreZoom);
+			centreLong = normangle(centreLong - 15.0 * RAD / double(centreZoom));
 			return true;
 		case OAPI_KEY_RBRACKET:
-			centreLong += 15.0 * RAD / double(centreZoom);
+			centreLong = normangle(centreLong + 15.0 * RAD / double(centreZoom));
 			return true;
 		case OAPI_KEY_M:
 			numTargets -= 1;
@@ -663,6 +747,36 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			return true;
 		case OAPI_KEY_P:
 			proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION));
+
+			{
+				bool foundValidProjection = false;
+				int checkedProjections = 0;
+				while (!foundValidProjection && checkedProjections < int(LASTENTRYPROJECTION)) // cycle through projections until we find a valid one
+				{
+					// Check if the current projection is in the block-list
+					bool selectionIsBlocked = false;
+					//int numberChecked = 0;
+					int i = 0;
+					while (!selectionIsBlocked && i < int(LASTENTRYPROJECTION))
+					{
+						if (DEFAULT_VALUES.BLOCK_PROJECTIONS[i] == int(proj)) // found the current projection in the block-list
+						{
+							selectionIsBlocked = true; // stop search
+							proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION)); // and go to next projection
+						}
+
+						i++;
+					}
+
+					if (!selectionIsBlocked) // there was no blocking of current projection
+					{
+						foundValidProjection = true; // success! Allow it to be selected
+					}
+
+					checkedProjections++;
+				}
+			}
+			
 			return true;
 		case OAPI_KEY_1:
 			referenceListScreen = true;
@@ -722,6 +836,11 @@ bool GridResolution(void* id, char* str, void* data)
 bool NumberOrbitsDisplayed(void* id, char* str, void* data)
 {
 	return ((MapMFD*)data)->SetNumberOrbitsDisplayed(str);
+}
+
+bool SpecificAltitudeSelection(void* id, char* str, void* data)
+{
+	return ((MapMFD*)data)->SetSpecificAltitudeSelect(str);
 }
 
 bool MapMFD::SetReferencePlanet(char* rstr)
@@ -861,6 +980,18 @@ bool MapMFD::SetNumberOrbitsDisplayed(char* rstr)
 	return false;
 }
 
+bool MapMFD::SetSpecificAltitudeSelect(char* rstr)
+{
+	double factor = 1.0;
+	if (!_strnicmp(rstr + strlen(rstr) - 1, "k", 1))
+		factor = 1e3;
+	else if (!_strnicmp(rstr + strlen(rstr) - 1, "M", 1))
+		factor = 1e6;
+
+	drawSpecificAlt = atof(rstr) * factor;
+	return true;
+}
+
 void MapMFD::StoreStatus() const
 {
 	MapMFDState.autoResolution = autoResolution;
@@ -887,10 +1018,11 @@ void MapMFD::StoreStatus() const
 		MapMFDState.targetCoord[i][1] = targetCoord[i][1];
 	}
 	MapMFDState.trackPosition = trackPosition;
-
+	MapMFDState.orbitTrackGround = orbitTrackGround;
 	MapMFDState.orbitTrackAngleDelta = orbitTrackAngleDelta;
 	MapMFDState.orbitTrackOrbitsNumber = orbitTrackOrbitsNumber;
 	MapMFDState.displayElevationRadar = displayElevationRadar;
+	MapMFDState.drawSpecificAlt = drawSpecificAlt;
 	for (int i = 0; i < GROUND_TRACK_HISTORY_SIZE; i++)
 	{
 		MapMFDState.shipHistory[i][0] = shipHistory[i][0];
@@ -933,8 +1065,10 @@ void MapMFD::RecallStatus()
 		trackPosition = MapMFDState.trackPosition;
 
 		orbitTrackAngleDelta = MapMFDState.orbitTrackAngleDelta;
+		orbitTrackGround = MapMFDState.orbitTrackGround;
 		orbitTrackOrbitsNumber = MapMFDState.orbitTrackOrbitsNumber;
 		displayElevationRadar = MapMFDState.displayElevationRadar;
+		drawSpecificAlt = MapMFDState.drawSpecificAlt;
 		for (int i = 0; i < GROUND_TRACK_HISTORY_SIZE; i++)
 		{
 			shipHistory[i][0] = MapMFDState.shipHistory[i][0];
@@ -944,7 +1078,7 @@ void MapMFD::RecallStatus()
 		shipHistoryIndex = MapMFDState.shipHistoryIndex;
 		shipHistoryLength = MapMFDState.shipHistoryLength;
 		showVessels = MapMFDState.showVessels;
-		showHistory = MapMFDState.shipHistory;
+		showHistory = MapMFDState.showHistory;
 	}
 	else if (resetCommand)
 	{
@@ -1069,38 +1203,11 @@ void MapMFD::ReadStatus(FILEHANDLE scn)
 
 void MapMFD::MapScreen(oapi::Sketchpad* skp)
 {
-	double simt = oapiGetSimTime(); // sim time
-
-	int textPos = 1;
-	char cbuf[100];
-	if (debugInformation)
-	{
-		sprintf(cbuf, "In: %i, out: %i. SkipFactor: %i. Auto: %i", pointsInside, pointsOutside, int(58800 / defaultMapLinesAmount / centreZoom) + 1, int(autoResolution));
-		skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
-		textPos++;
-	}
-	pointsInside = 0;
-	pointsOutside = 0;
+	int textPos = 2;
 
 	// Title
 	char refName[30], mfdTitle[100];
 	oapiGetObjectName(ref, refName, 30);
-
-	sprintf(mfdTitle, "Map: ");
-	strcat(mfdTitle, refName); // Add name of mapped body
-
-	Title(skp, mfdTitle);	// Draws the MFD title
-
-	// Draw track and zoom info
-	if (trackPosition != NOTRACK) sprintf(cbuf, "TRK");
-	else sprintf(cbuf, "   ");
-
-	if (centreZoom > 1) sprintf(cbuf, "%s  ZM %i", cbuf, centreZoom);
-	skp->Text(textDX * 60, 0, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, GetProjectionName());
-	skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
-	textPos++;
 
 	// Get our vessel current frame coordinates. This is used all throughout.
 	double currentLong, currentLat, currentRad;
@@ -1124,58 +1231,837 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	// Starting map plotting here!
 
 	// First fill Sun-lit side
-	const int sunCircleResolution = 180;
-	double sunLong, sunLat, sunRad;
-	GetObjectEquPos(oapiGetGbodyByIndex(0), &sunLong, &sunLat, &sunRad); // I here expect ALL systems to have the Sun (or light giving star) as first body in config.
-	double transformedSunLong, transformedSunLat;
-	TransformPoint(sunLong, sunLat, &transformedSunLong, &transformedSunLat, proj);
-	skp->SetBrush(sunIcon);
-	skp->SetPen(terminatorLine);
-	int sunSize = 10;
-	skp->Ellipse(int(W / 2 + transformedSunLong / PI * W / 2) - sunSize, int(H / 2 - transformedSunLat / PI05 * H / 4) - sunSize, int(W / 2 + transformedSunLong / PI * W / 2) + sunSize, int(H / 2 - transformedSunLat / PI05 * H / 4) + sunSize);
-	skp->SetBrush(NULL); // disable autofilling
+	MakeSunLight(skp);
+	
+	// Draw grid lines for map
+	MakeGridLines(skp);
+
+	// Draw map
+	MakeMap(skp, refName, &textPos);
+
+	// Draw surface bases and vessels
+	MakeSurfaceBasesAndVessels(skp);
+
+	int infoLinesDrawn = 0;
+
+	// Draw targets and their information
+	MakeTargets(skp, currentLong, currentLat, &infoLinesDrawn);
+
+	// Draw all our own ship info and data
+	MakeShip(skp, currentLong, currentLat, currentRad, &infoLinesDrawn);
+
+	// ==========================
+	// End of map plotting.
+
+	// Write text in the end, to get it on top
+	skp->SetFont(GetDefaultFont(0)); // Set back to default
+	skp->SetTextAlign(); // back to default
+	char cbuf[100];
+	if (debugInformation)
+	{
+		sprintf(cbuf, "In: %i, out: %i.", pointsInside, pointsOutside);
+		skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+		textPos++;
+
+		sprintf(cbuf, "SkipFactor: % i.Auto : % i", int(58800 / defaultMapLinesAmount / centreZoom) + 1, int(autoResolution));
+		skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+		textPos++;
+	}
+	pointsInside = 0;
+	pointsOutside = 0;
+
+	sprintf(mfdTitle, "Map: ");
+	strcat(mfdTitle, refName); // Add name of mapped body
+
+	Title(skp, mfdTitle);	// Draws the MFD title
+
+	// Draw track and zoom info
+	if (trackPosition != NOTRACK) sprintf(cbuf, "TRK");
+	else sprintf(cbuf, "   ");
+
+	if (centreZoom > 1) sprintf(cbuf, "%s  ZM %i", cbuf, centreZoom);
+	skp->Text(textDX * 60, 0, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, GetProjectionName());
+	skp->Text(textDX, textDY * 1, cbuf, strlen(cbuf));
+}
+
+void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
+{
+	// Title
+	char mfdTitle[50];
+	sprintf(mfdTitle, "Map: Display parameters");
+	Title(skp, mfdTitle); // Draws the MFD title
+
+	int textX0 = W / 80;
+	int dY = H / 16;
+	int textY0 = H / 20 * 2 - currentTopListed * dY;
+	int secondRowIndent = 60;
+
+	char cbuf[100];
+	skp->SetFont(GetDefaultFont(1)); // Set to the correct font
+	skp->SetTextColor(configTextColour); // Set to default colour
+
+	sprintf(cbuf, "Orbit lines");
+	skp->Text(textX0, textY0 + int(CONFIGTRACKMODE) * dY, cbuf, strlen(cbuf));
+	if (orbitTrackGround) sprintf(cbuf, "Groundtrack");
+	else sprintf(cbuf, "Orbit plane");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKMODE) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Elevation radar");
+	skp->Text(textX0, textY0 + int(CONFIGRADAR) * dY, cbuf, strlen(cbuf));
+	if (displayElevationRadar) sprintf(cbuf, "On");
+	else sprintf(cbuf, "Off");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRADAR) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Display other vessels");
+	skp->Text(textX0, textY0 + int(CONFIGSHOWVESSELS) * dY, cbuf, strlen(cbuf));
+	if (showVessels) sprintf(cbuf, "On");
+	else sprintf(cbuf, "Off");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGSHOWVESSELS) * dY, cbuf, strlen(cbuf));
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track mode, so indicate that by graying out if not in that
+	sprintf(cbuf, "Display specific altitude");
+	skp->Text(textX0, textY0 + int(CONFIGDRAWSPECIFICALT) * dY, cbuf, strlen(cbuf));
+	if (drawSpecificAlt == 0.0) sprintf(cbuf, " Off"); // Add space, as format value does it, and we later remove that space
+	else FormatValue(cbuf, 20, drawSpecificAlt);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGDRAWSPECIFICALT) * dY, cbuf + 1, strlen(cbuf + 1)); // Format value creates an ugly space before number, so remove it here
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track mode, so indicate that by graying out if not in that
+	sprintf(cbuf, "Display history track");
+	skp->Text(textX0, textY0 + int(CONFIGSHOWHISTORY) * dY, cbuf, strlen(cbuf));
+	if (showHistory) sprintf(cbuf, "On");
+	else sprintf(cbuf, "Off");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGSHOWHISTORY) * dY, cbuf, strlen(cbuf));
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	sprintf(cbuf, "Projection");
+	skp->Text(textX0, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, GetProjectionName());
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Azimuth. Equidist. pole");
+	skp->Text(textX0, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
+	if (azimuthalEquidistantNortPole) sprintf(cbuf, "North");
+	else sprintf(cbuf, "South");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Reset map pan");
+	skp->Text(textX0, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%.1f\u00B0N %.1f\u00B0E", centreLat * DEG, centreLong * DEG);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Grid angle sep.");
+	skp->Text(textX0, textY0 + int(CONFIGGRIDSEP) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%i\u00B0", gridAngleSeparation);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGGRIDSEP) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Grid angle res.");
+	skp->Text(textX0, textY0 + int(CONFIGGRIDRES) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%i\u00B0", gridResolution);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGGRIDRES) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Map skip every N line");
+	skp->Text(textX0, textY0 + int(CONFIGMAPRES) * dY, cbuf, strlen(cbuf));
+	if (autoResolution) sprintf(cbuf, "AUTO");
+	else sprintf(cbuf, "%i", skipEveryNLines);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGMAPRES) * dY, cbuf, strlen(cbuf));
+
+	if (!autoResolution) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects auto resolution state, so indicate that by graying out if not in auto
+	sprintf(cbuf, "Map auto resol. lines");
+	skp->Text(textX0, textY0 + int(CONFIGMAPAUTOSIZE) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%i", defaultMapLinesAmount);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGMAPAUTOSIZE) * dY, cbuf, strlen(cbuf));
+	if (!autoResolution) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
+	sprintf(cbuf, "Orbit track time step");
+	skp->Text(textX0, textY0 + int(CONFIGTRACKANGLEDELTA) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%.3f\u00B0", orbitTrackAngleDelta);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKANGLEDELTA) * dY, cbuf, strlen(cbuf));
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
+	sprintf(cbuf, "Max orbits displayed");
+	skp->Text(textX0, textY0 + int(CONFIGTRACKNUMORBITS) * dY, cbuf, strlen(cbuf));
+	double iterationStop = GROUND_TRACK_ITERATION_MAX_STEPS / (360.0 / orbitTrackAngleDelta); // iteration stops sooner if too high resolution.
+	if (iterationStop < orbitTrackOrbitsNumber) sprintf(cbuf, "%.2f (%.2f)", orbitTrackOrbitsNumber, iterationStop);
+	else sprintf(cbuf, "%.2f", orbitTrackOrbitsNumber);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKNUMORBITS) * dY, cbuf, strlen(cbuf));
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	sprintf(cbuf, "Circle of view resolution");
+	skp->Text(textX0, textY0 + int(CONFIGPLANETVIEWSEGMENTS) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%i", viewCircleResolution);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPLANETVIEWSEGMENTS) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Reset MFD");
+	skp->Text(textX0, textY0 + int(CONFIGRESETALL) * dY, cbuf, strlen(cbuf));
+	if (resetCommand) sprintf(cbuf, "Press F8");
+	else sprintf(cbuf, "OFF");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRESETALL) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Show debug info");
+	skp->Text(textX0, textY0 + int(CONFIGDEBUGINFO) * dY, cbuf, strlen(cbuf));
+	if (debugInformation) sprintf(cbuf, "ON");
+	else sprintf(cbuf, "OFF");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGDEBUGINFO) * dY, cbuf, strlen(cbuf));
+
+	// Create selection box
+	skp->SetPen(mainOrbitTrack); // re-use old pen.
+	skp->Rectangle(textX0 - 5, textY0 + int(configSelection) * dY, W - textX0, textY0 + dY + int(configSelection) * dY);
+}
+
+void MapMFD::ReferenceListScreen(oapi::Sketchpad* skp)
+{
+	// Title
+	char mfdTitle[50];
+	sprintf(mfdTitle, "Map: Reference select");
+	Title(skp, mfdTitle); // Draws the MFD title
+
+	int textX0 = W / 80;
+	int textY0 = H / 20 * 2;
+	int dY = H / 16;
+	int secondRowIndent = 60;
+
+	char cbuf[100];
+	skp->SetFont(GetDefaultFont(1)); // Set to the correct font
+
+	if (updateReferenceCache) BuildReferenceCache(); // create list if it doesn't already exist.
+
+	// Finally print list in sorted order
+
+	int lineNumber = -currentReferenceTopListed;
+
+	for (int i = 0; i < totalPlanets; i++)
+	{
+		sprintf(cbuf, sortedPlanetsCache[i].name);
+		skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+		lineNumber++;
+
+		if (i == referenceExpand)
+		{
+			for (int k = 0; k < sortedPlanetsCache[i].moonCount; k++)
+			{
+				sprintf(cbuf, sortedPlanetsCache[i].moonName[k]);
+				skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+				lineNumber++;
+			}
+		}
+	}
+
+	// Create selection box
+	skp->SetPen(mainOrbitTrack); // re-use old pen.
+	skp->Rectangle(textX0 - 5, textY0 + (referenceSelection - currentReferenceTopListed) * dY, W - textX0, textY0 + dY + (referenceSelection - currentReferenceTopListed) * dY);
+}
+
+void MapMFD::TargetListScreen(oapi::Sketchpad* skp)
+{
+	// Title
+	char mfdTitle[50];
+	sprintf(mfdTitle, "Map: Target select. Number: %i", numTargets);
+	Title(skp, mfdTitle); // Draws the MFD title
+
+	int textX0 = W / 80;
+	int textY0 = H / 20 * 2;
+	int dY = H / 16;
+	int secondRowIndent = 60;
+
+	char cbuf[100];
+	skp->SetFont(GetDefaultFont(1)); // Set to the correct font
+
+	int lineNumber = -currentTargetTopListed;
+
+	// Display bases on reference object
+	if (targetExpand == EXPANDSPACEPORTS) sprintf(cbuf, "Spaceports <");
+	else sprintf(cbuf, "Spaceports >");
+	skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+	lineNumber++;
+
+	DWORD defaultColour = 0xFFFFFF; // white
+
+	if (targetExpand == EXPANDSPACEPORTS)
+	{
+		for (int i = 0; i < (int)oapiGetBaseCount(ref); i++)
+		{
+			OBJHANDLE objectHandle = oapiGetBaseByIndex(ref, i);
+			oapiGetObjectName(objectHandle, cbuf, 20);
+			if (ObjectAlreadyInTarget(objectHandle)) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
+			skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+			skp->SetTextColor(defaultColour);
+			lineNumber++;
+		}
+	}
+
+	// Display vessels around reference object
+	if (targetExpand == EXPANDSPACECRAFT) sprintf(cbuf, "Spacecraft <");
+	else sprintf(cbuf, "Spacecraft >");
+	skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+	lineNumber++;
+
+	if (targetExpand == EXPANDSPACECRAFT)
+	{
+		for (int i = 0; i < (int)oapiGetVesselCount(); i++)
+		{
+			OBJHANDLE listVessel = oapiGetVesselByIndex(i);
+			VESSEL* ves = oapiGetVesselInterface(listVessel);
+			if (ves->GetSurfaceRef() == ref)
+			{
+				oapiGetObjectName(listVessel, cbuf, 60);
+				if (ObjectAlreadyInTarget(listVessel)) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
+				skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+				skp->SetTextColor(defaultColour);
+				lineNumber++;
+			}
+		}
+	}
+
+	// Display moons around reference object
+	if (targetExpand == EXPANDMOONS) sprintf(cbuf, "Moons <");
+	else sprintf(cbuf, "Moons >");
+	skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+	lineNumber++;
+
+	if (targetExpand == EXPANDMOONS)
+	{
+		if (updateReferenceCache) BuildReferenceCache();
+
+		for (int i = 0; i < totalPlanets; i++)
+		{
+			if (sortedPlanetsCache[i].handle == ref)
+			{
+				// We found our planet. Now write out the moons, and then break
+				for (int k = 0; k < sortedPlanetsCache[i].moonCount; k++)
+				{
+					sprintf(cbuf, sortedPlanetsCache[i].moonName[k]);
+					if (ObjectAlreadyInTarget(sortedPlanetsCache[i].moonHandle[k])) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
+					skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+					skp->SetTextColor(defaultColour);
+					lineNumber++;
+				}
+				break;
+			}
+		}
+	}
+
+	// Create selection box
+	skp->SetPen(mainOrbitTrack); // re-use old pen.
+	skp->Rectangle(textX0 - 5, textY0 + (targetSelection - currentTargetTopListed) * dY, W - textX0, textY0 + dY + (targetSelection - currentTargetTopListed) * dY);
+}
+
+void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
+{
+	const int sunCircleResolution = 360 / gridResolution;
+	double sunLong, sunLat, sunDist;
+	GetObjectEquPos(oapiGetGbodyByIndex(0), &sunLong, &sunLat, &sunDist); // I here expect ALL systems to have the Sun (or light giving star) as first body in config.
 	// Calculate the angular viewable area, and calculate points for all different bearings. From https://www.movable-type.co.uk/scripts/latlong.html
 	double sunAngleView = PI05; // just set it like this, and save computation power, although it really is 0.0024 degrees off for the Earth.
-	double firstLo, firstLa, previousLo, previousLa;
-	skp->SetPen(terminatorLine);
-	for (int i = 0; i < sunCircleResolution; i++) // around entire circle
+	// But ACKCHYUALLY, the angle should be 90.26 degrees for Earth, as the "0.0024 degrees" from above considers point light, but as the Sun has a non-zero extent
+	// in the sky, the equation for the sunlight angle view (considering just first contact with the Sun's disk, is given by PI05 + asin((sunRad + refRad) / sunDist),
+	// which for the Earth is about 90.26 degrees, and not 89.9976 degrees (point light), or 90 degrees (approx).
+	// For Mercury, the angle is 90.67 degrees.
+	// But turns out that it's MUCH easier to get a nice-looking result using the PI05 simplification, so we don't get the opportunity to be pedantic.
+
+	//// Add icon for sun position first. If the later daylight fill works, this will be overwritten. If it doesn't this shows up as a backup
+	//double transformedSunLong, transformedSunLat;
+	//TransformPoint(sunLong, sunLat, &transformedSunLong, &transformedSunLat, proj);
+
+	//skp->SetBrush(sunIcon);
+	//skp->SetPen(NULL);
+	//int sunSize = 10;
+	//skp->Ellipse(int(W / 2 + transformedSunLong / PI * W / 2) - sunSize, int(H / 2 - transformedSunLat / PI05 * H / 4) - sunSize, int(W / 2 + transformedSunLong / PI * W / 2) + sunSize, int(H / 2 - transformedSunLat / PI05 * H / 4) + sunSize);
+	skp->SetBrush(NULL); // disable autofilling
+
+	// For debug-text:
+	skp->SetTextAlign(oapi::Sketchpad::CENTER, oapi::Sketchpad::BASELINE);
+	skp->SetFont(mapObjectFont);
+
+	oapi::IVECTOR2 sunFill[1000];
+	int fillElements;
+	double transformedLong, transformedLat; // create here, instead of creating it three (or more) times
+
+	double bearingToEdge = 0.0; // this value tells where the terminator starts, and is used in fill, and later when we create the terminator
+	int direction = 1; // this value tells which direction the terminator goes from the starting bearing, and is used in fill, and later when we create the terminator
+
+	bool completelySunFilled = true;
+
+	switch (proj)
 	{
-		double bearing = double(i) / double(sunCircleResolution) * PI2;
+	case EQUIRECTANGULAR:
+	case MILLER:
+	case MERCATOR:
+	case EQUALEARTH:
+	case MOLLWEIDE:
+	case ORTELIUSOVAL:
+	case WINKELTRIPEL:
+	case RECTANGULARPOLYCONIC:
+		fillElements = 0; // switch-case doesn't allow for declaring with value, so first declare, then assign
+		double leftmostLongitude, leftmostTerminatorLatitude; // longitude of left edge of map
+		leftmostLongitude = normangle(centreLong - PI); // switch-case doesn't allow for declaring with value, so first declare, then assign
+		leftmostTerminatorLatitude = atan(tan(sunLat + PI05) * sin(leftmostLongitude - sunLong + PI05)); // source: https://math.stackexchange.com/questions/804301/what-is-the-approximation-equation-for-making-the-day-night-wave for inspiration, and some playing/thinking in GeoGebra
+		bearingToEdge = atan2(sin(leftmostLongitude - sunLong) * cos(leftmostTerminatorLatitude), cos(sunLat) * sin(leftmostTerminatorLatitude) - sin(sunLat) * cos(leftmostTerminatorLatitude) * cos(leftmostLongitude - sunLong));
+
+		direction = 1;
+		if (sunLat < 0.0) direction = -1; // switch direction at equinox, so that points are always plotted from left to right, coming back left at one of the poles.
+
+		for (int i = 0; i <= sunCircleResolution; i++) // around entire circle
+		{
+			double bearing = -double(direction * i) / double(sunCircleResolution) * PI2 + bearingToEdge; // Add an offset so that first bearing is leftmost part of screen, and last bearing is rightmost part of screen
+
+			double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
+			double longPoint = sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint));
+
+			if (i == 0) longPoint += 1e-5; // force point to lie exactly on the left side
+			else if (i == sunCircleResolution) longPoint -= 1e-5; // force point to lie exactly on the right side
+			
+			TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
+
+			sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+			sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+			if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+			if (debugInformation) // show index at vertices
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "%i", fillElements);
+				skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+			}
+
+			fillElements++;
+		}
+
+		// And now add the edge coordinates
+		// First the right side
+		// Find which latitude to start from. Example: leftmostTerminatorLatitude = 3.8 deg and bottom edge -> start from 2 deg (if gridResolution is 2 deg).
+		// Example: leftmostTerminatorLatitude = -3.8 and bottom edge -> start from -4 deg.
+		int latitudeStart;
+		latitudeStart = ceil(leftmostTerminatorLatitude * DEG / int(gridResolution)) * gridResolution;
+		if (sunLat < 0.0) latitudeStart = floor(leftmostTerminatorLatitude * DEG / int(gridResolution)) * gridResolution;
+
+		double decrementValue;
+		decrementValue = 0.999;
+		// Make right up/down
+		for (int i = latitudeStart; abs(i) < 90; i += direction * gridResolution)
+		{
+			TransformPoint(PI * decrementValue + centreLong, i * RAD, &transformedLong, &transformedLat, proj);
+			sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+			sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+			if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+			if (debugInformation) // show index at vertices
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "%i", fillElements);
+				skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+			}
+
+			fillElements++;
+		}
+		// Make top/bottom
+		//for (int i = 180; i >= -180; i -= gridResolution) 
+		for (int i = 180; i >= -180; i -= 360) // the poles are in our projections always either flat sides (e.g. equirectangular) or singular points (e.g. Mollweide), so we only need two points, +180 and -180 (for Mollweide we actually only need one)
+		{
+			if (i == 180) TransformPoint(i * RAD + centreLong - 1e-5, direction * PI05 * decrementValue, &transformedLong, &transformedLat, proj);
+			else if (i == -180) TransformPoint(i * RAD + centreLong + 1e-5, direction * PI05 * decrementValue, &transformedLong, &transformedLat, proj);
+			else TransformPoint(i * RAD + centreLong, direction * PI05 * decrementValue, &transformedLong, &transformedLat, proj);
+
+			sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+			sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+			if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+			if (debugInformation) // show index at vertices
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "%i", fillElements);
+				skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+			}
+			fillElements++;
+		}
+
+		// Make left down/up
+		for (int i = direction * (90 - gridResolution); direction * i >= direction * latitudeStart; i -= direction * gridResolution)
+		{
+			TransformPoint(-PI * decrementValue + centreLong, i * RAD, &transformedLong, &transformedLat, proj);
+			sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+			sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+			if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+			if (debugInformation) // show index at vertices
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "%i", fillElements);
+				skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+			}
+			fillElements++;
+		}
+
+		skp->SetBrush(sunlitSide);
+		skp->SetPen(NULL); // add terminator line later
+		if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+		{
+			// Omit the flickering problem, and just fill with light
+			oapi::IVECTOR2 sunSquare[4];
+			sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
+			sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
+			sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
+			sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
+			skp->Polygon(sunSquare, 4);
+
+			if (debugInformation) // display info
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "Simple fill square");
+				skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+			}
+		}
+		else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
+
+		break;
+	case AZIMUTHALEQUIDISTANT:
+	case LAMBERTAZIMUTHAL:
+		// These are azimuthal projections, where the entire Sun-lit are may be undivided. This occurs if sunLat/sunLong is less than sunAngleView from centreLat/centreLong
+		// There are two cases \
+			- Entire Sun-lit in one piece (sunPos - centrePos < 90 deg) \
+			- Band of Sun all around, with dark patch in middle (else)
+
+		if (oapiOrthodome(sunLong, sunLat, centreLong, centreLat) < sunAngleView) // entire Sun in one piece.
+		{
+			fillElements = 0; // initialise
+			for (int i = 0; i < 360; i += gridResolution)
+			{
+				double bearing = double(i) * RAD;
+
+				double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
+				double longPoint = sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint));
+
+				TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
+
+				sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+				sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+				if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+				if (debugInformation) // show index at vertices
+				{
+					char debugLabel[4];
+					sprintf(debugLabel, "%i", fillElements);
+					skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+				}
+
+				fillElements++;
+			}
+
+			skp->SetBrush(sunlitSide);
+			skp->SetPen(NULL); // add terminator line later
+			if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+			{
+				// Omit the flickering problem, and just fill with light
+				oapi::IVECTOR2 sunSquare[4];
+				sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
+				sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
+				sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
+				sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
+				skp->Polygon(sunSquare, 4);
+
+				if (debugInformation) // display info
+				{
+					char debugLabel[4];
+					sprintf(debugLabel, "Simple fill square");
+					skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+				}
+			}
+			else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
+		}
+		else // light strip around. So instead do the opposite of above: first fill entire map with light, and then plot darkness.
+		{
+			// First plot light
+			fillElements = 0; // initialise
+			decrementValue = 0.999;
+			for (int i = 0; i < 360; i += gridResolution)
+			{
+				double bearing = double(i) * RAD;
+
+				double latPoint = asin(sin(centreLat) * cos(PI * decrementValue) + cos(centreLat) * sin(PI * decrementValue) * cos(bearing));
+				double longPoint = centreLong + atan2(sin(bearing) * sin(PI * decrementValue) * cos(centreLat), cos(PI * decrementValue) - sin(centreLat) * sin(latPoint));
+
+				TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
+
+				sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+				sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+				if (debugInformation) // show index at vertices
+				{
+					char debugLabel[4];
+					sprintf(debugLabel, "%i", fillElements);
+					skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+				}
+
+				fillElements++;
+			}
+
+			skp->SetBrush(sunlitSide);
+			skp->SetPen(NULL); // add terminator line later
+			skp->Polygon(sunFill, fillElements);
+
+			fillElements = 0; // reset
+			// Then plot darkness, where the centre is the antipode of sunPos, which is (-sunLat, sunLong + 180 deg)
+			for (int i = 0; i < 360; i += gridResolution)
+			{
+				double bearing = double(i) * RAD;
+
+				double latPoint = asin(sin(-sunLat) * cos(sunAngleView) + cos(-sunLat) * sin(sunAngleView) * cos(bearing));
+				double longPoint = sunLong + PI + atan2(sin(bearing) * sin(sunAngleView) * cos(-sunLat), cos(sunAngleView) - sin(-sunLat) * sin(latPoint));
+
+				TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
+
+				sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+				sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+				if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+				if (debugInformation) // show index at vertices
+				{
+					char debugLabel[4];
+					sprintf(debugLabel, "%i", fillElements);
+					skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+				}
+
+				fillElements++;
+			}
+
+			skp->SetBrush(black);
+			skp->SetPen(NULL); // add terminator line later
+			if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+			{
+				// We already have made sunFill, as we're in azimuthal projection
+				if (debugInformation) // display info
+				{
+					char debugLabel[4];
+					sprintf(debugLabel, "Simple fill square");
+					skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+				}
+			}
+			else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
+		}
+
+		break;
+	case TRANSVERSEMERCATOR:
+	case CASSINI:
+		// These are transverse projections. Therefore the daylight will always fill either the left or right side (just like the cylindrical projections [e.g. equirectanguar] have always one pole in light).
+		fillElements = 0; // switch-case doesn't allow for declaring with value, so first declare, then assign
+		double terminatorEquatorLongitude; // longitude of the terminator where it crosses the Equator
+		terminatorEquatorLongitude = sunLong - PI05;
+		if (abs(normangle(centreLong - terminatorEquatorLongitude)) < PI05) terminatorEquatorLongitude += PI; // push the value to the longitude that is on the map edge, which is more than 90 deg from centreLong
+
+		if (normangle(sunLong - centreLong) < 0.0) direction = -1;
+		else direction = 1;
+
+		bearingToEdge = atan2(sin(terminatorEquatorLongitude - sunLong) * cos(0.0), cos(sunLat) * sin(0.0) - sin(sunLat) * cos(0.0) * cos(terminatorEquatorLongitude - sunLong));
+
+		for (int i = 0; i <= sunCircleResolution; i++) // around entire circle
+		{
+			double bearing = -double(direction * i) / double(sunCircleResolution) * PI2 + bearingToEdge; // Add an offset so that first bearing is top part of screen, and last bearing is bottom part of screen
+
+			double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
+
+			if (i == 0) latPoint += 1e-5; // force point to lie exactly on the top side
+			else if (i == sunCircleResolution) latPoint -= 1e-5; // force point to lie exactly on the bottom side
+
+			double longPoint = sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint));
+
+			TransformPoint(longPoint, latPoint, &transformedLong, &transformedLat, proj);
+
+			sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+			sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+			if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+			if (debugInformation) // show index at vertices
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "%i", fillElements);
+				skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+			}
+
+			fillElements++;
+		}
+
+		// And now add the edge coordinates
+		double edgeLongitude;
+		if (direction == 1) // go right
+			edgeLongitude = centreLong + PI05 + 1e-4;
+		else // go left
+			edgeLongitude = centreLong - PI05 - 1e-4;
+
+		// Bottom edge, either left or right
+		TransformPoint(edgeLongitude, -1e-8, &transformedLong, &transformedLat, proj);
+		sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+		sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+		if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+		if (debugInformation) // show index at vertices
+		{
+			char debugLabel[4];
+			sprintf(debugLabel, "%i", fillElements);
+			skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+		}
+		fillElements++;
+
+		// Top edge, either left or right
+		TransformPoint(edgeLongitude, +1e-8, &transformedLong, &transformedLat, proj);
+		sunFill[fillElements].x = int(W / 2 + transformedLong / PI * W / 2);
+		sunFill[fillElements].y = int(H / 2 - transformedLat / PI05 * W / 4);
+
+		if (completelySunFilled && (0 < sunFill[fillElements].x && sunFill[fillElements].x < W) && (0 < sunFill[fillElements].y && sunFill[fillElements].y < H)) completelySunFilled = false;
+
+		if (debugInformation) // show index at vertices
+		{
+			char debugLabel[4];
+			sprintf(debugLabel, "%i", fillElements);
+			skp->Text(sunFill[fillElements].x, sunFill[fillElements].y, debugLabel, strlen(debugLabel));
+		}
+		fillElements++;
+
+		skp->SetBrush(sunlitSide);
+		skp->SetPen(NULL); // add terminator line later
+		if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+		{
+			// Omit the flickering problem, and just fill with light
+			oapi::IVECTOR2 sunSquare[4];
+			sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
+			sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
+			sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
+			sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
+			skp->Polygon(sunSquare, 4);
+
+			if (debugInformation) // display info
+			{
+				char debugLabel[4];
+				sprintf(debugLabel, "Simple fill square");
+				skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+			}
+		}
+		else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
+
+		break;
+	default:
+		break;
+	}
+
+	// Add the terminator line
+	//// Longitude of left edge of map
+	//double leftmostLongitude = normangle(centreLong - PI); // switch-case doesn't allow for declaring with value, so first declare, then assign
+	//double leftmostTerminatorLatitude = atan(tan(sunLat + PI05) * sin(leftmostLongitude - sunLong + PI05)); // source: https://math.stackexchange.com/questions/804301/what-is-the-approximation-equation-for-making-the-day-night-wave for inspiration, and some playing/thinking in GeoGebra
+	//double bearingToEdge = atan2(sin(leftmostLongitude - sunLong) * cos(leftmostTerminatorLatitude), cos(sunLat) * sin(leftmostTerminatorLatitude) - sin(sunLat) * cos(leftmostTerminatorLatitude) * cos(leftmostLongitude - sunLong));
+	//int direction = 1;
+	//if (sunLat < 0.0) direction = -1; // switch direction at equinox, so that points are always plotted from left to right, coming back left at one of the poles.
+
+	skp->SetPen(terminatorLine);
+	double previousLo, previousLa;
+
+	for (int i = 0; i <= sunCircleResolution; i++) // around entire circle, and <= instead of < to get the same point as leftmost, just on the right side.
+	{
+		double bearing = -double(direction * i) / double(sunCircleResolution) * PI2 + bearingToEdge;
 
 		double latPoint = asin(sin(sunLat) * cos(sunAngleView) + cos(sunLat) * sin(sunAngleView) * cos(bearing));
 		double longPoint = normangle(sunLong + atan2(sin(bearing) * sin(sunAngleView) * cos(sunLat), cos(sunAngleView) - sin(sunLat) * sin(latPoint)));
 
-		if (i != 0)
+		if (i == 0)
 		{
-			DrawLine(previousLo, previousLa, longPoint, latPoint, skp);
+			longPoint += 1e-5; // force point to be leftmost of map
+			latPoint += 1e-5; // force point to be top of map (for transverse maps)
 		}
 		else
 		{
-			firstLa = latPoint;
-			firstLo = longPoint;
+			if (i == sunCircleResolution)
+			{
+				longPoint -= 1e-5; // force point to be rightmost of map
+				latPoint -= 1e-5; // force point to be bottom of map (for transverse maps)
+			}
+			DrawLine(previousLo, previousLa, longPoint, latPoint, skp, false);
 		}
 
 		previousLo = longPoint;
 		previousLa = latPoint;
 	}
+}
 
-	DrawLine(previousLo, previousLa, firstLo, firstLa, skp); // wrap around
-	
-	//// Draw encircling shape / border for the map graphic
-	//skp->SetPen(gridLines);
-	//for (int i = 0; i < 360 / gridResolution; i++)
-	//{
-	//	int lo = -180 + i * gridResolution;
-	//	DrawLine(lo * RAD - centreLong, -PI05 - centreLat, lo * RAD + gridResolution * RAD - centreLong, -PI05 - centreLat, skp, false); // bottom
-	//	DrawLine(lo * RAD - centreLong, PI05 - centreLat, lo * RAD + gridResolution * RAD - centreLong, PI05 - centreLat, skp, false); // top
-	//}
-	//
-	//for (int i = 0; i < 180 / gridResolution; i++)
-	//{
-	//	int la = -90 + i * gridResolution;
-	//	DrawLine(-PI - centreLong, la * RAD - centreLat, -PI - centreLong, la * RAD + gridResolution * RAD - centreLat, skp, false); // left
-	//	DrawLine(PI - centreLong, la * RAD - centreLat, PI - centreLong, la * RAD + gridResolution * RAD - centreLat, skp, false); // right
-	//}
+void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
+{
+	// Draw encircling shape / border for the map graphic, but only for non-rectangular maps with poles on the sides (so called pseudocylindrical projections).
+	switch (proj)
+	{
+	case EQUIRECTANGULAR:
+	case MILLER:
+	case MERCATOR:
+	case TRANSVERSEMERCATOR:
+	case CASSINI:
+		break;
+	case EQUALEARTH:
+	case MOLLWEIDE:
+	case ORTELIUSOVAL:
+	case WINKELTRIPEL:
+	case RECTANGULARPOLYCONIC:
+		skp->SetPen(gridLines);
+
+		double decrementValue;
+		decrementValue = 0.999;
+		for (int i = -180; i < 180; i += gridResolution)
+		{
+			//double lo = i * 0.999;
+			DrawLine(i * RAD + centreLong, -PI05 * decrementValue, i * RAD + gridResolution * RAD + centreLong, -PI05 * decrementValue, skp, false); // bottom
+			DrawLine(i * RAD + centreLong, PI05 * decrementValue, i * RAD + gridResolution * RAD + centreLong, PI05 * decrementValue, skp, false); // top
+		}
+
+		for (int i = -90; i < 90; i += gridResolution)
+		{
+			//double la = i * 0.999;
+			DrawLine(-PI * decrementValue + centreLong, i * RAD, -PI * decrementValue + centreLong, i * RAD + gridResolution * RAD, skp, false); // left
+			DrawLine(PI * decrementValue + centreLong, i * RAD, PI * decrementValue + centreLong, i * RAD + gridResolution * RAD, skp, false); // right
+		}
+
+		break;
+	case AZIMUTHALEQUIDISTANT:
+	case LAMBERTAZIMUTHAL:
+		// These projections are so-called azimuthal, so the boundary is the great-circle 180 deg distance from the centre point.
+		// The encircling shape is thus a 180 deg angular distance for all bearings from centreLong/centreLat, much like the "viewable content"-circle and terminator line.
+		skp->SetPen(gridLines);
+		//double decrementValue;
+		decrementValue = 0.999;
+		double firstLong, firstLat, previousLong, previousLat;
+		for (int i = 0; i <= 360; i += gridResolution)
+		{
+			double bearing = double(i) * RAD;
+
+			double latPoint = asin(sin(centreLat) * cos(PI * decrementValue) + cos(centreLat) * sin(PI * decrementValue) * cos(bearing));
+			double longPoint = normangle(centreLong + atan2(sin(bearing) * sin(PI * decrementValue) * cos(centreLat), cos(PI * decrementValue) - sin(centreLat) * sin(latPoint)));
+
+			if (i != 0)
+			{
+				DrawLine(previousLong, previousLat, longPoint, latPoint, skp);
+			}
+			else
+			{
+				firstLong = longPoint;
+				firstLat = latPoint;
+			}
+
+			previousLat = latPoint;
+			previousLong = longPoint;
+		}
+		DrawLine(previousLong, previousLat, firstLong, firstLat, skp);
+
+		break;
+	default:
+		sprintf(oapiDebugString(), "ERROR! Default in MakeGridLines! %.2f", oapiGetSimTime());
+		break;
+	}
 
 	// Draw grid lines for map
 	skp->SetPen(gridLines);
@@ -1197,8 +2083,13 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			DrawLine(lo * RAD, la * RAD, lo * RAD + gridResolution * RAD, la * RAD, skp, false);
 		}
 	}
+}
 
-	// Draw map
+void MapMFD::MakeMap(oapi::Sketchpad* skp, const char *refName, int *txtPos)
+{
+	int textPos = *txtPos;
+	char cbuf[100];
+
 	if (updateCache)
 	{
 		char filePath[100];
@@ -1215,6 +2106,8 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 		if (debugInformation)
 		{
+			skp->SetFont(GetDefaultFont(0));
+			skp->SetTextAlign();
 			sprintf(cbuf, "Mode: %i, handle: %i", fileMode, (int)vectorFile);
 			skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
 			textPos++;
@@ -1330,6 +2223,8 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 			if (debugInformation)
 			{
+				skp->SetFont(GetDefaultFont(0));
+				skp->SetTextAlign();
 				sprintf(cbuf, "Last string: %s", line);
 				skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
 				textPos++;
@@ -1340,14 +2235,22 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 				if (vertexCounter == totalVertices)
 				{
-					sprintf(cbuf, "Read %i of %i vertices. Success!", vertexCounter, totalVertices);
+					sprintf(cbuf, "Read %i of %i vertices.", vertexCounter, totalVertices);;
+					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+					textPos++;
+
+					sprintf(cbuf, "Success!");
 					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
 					textPos++;
 				}
 				else
 				{
-					sprintf(cbuf, "Read %i of %i vertices. Failed!", vertexCounter, totalVertices);
+					sprintf(cbuf, "Read %i of %i vertices.", vertexCounter, totalVertices);
 					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+					textPos++;
+
+					sprintf(cbuf, "Failed!");
+					skp->Text(textDX, textDY* textPos, cbuf, strlen(cbuf));
 					textPos++;
 				}
 			}
@@ -1409,14 +2312,6 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 					if ((k % (skipLineFactor + 1)) == 0)
 					{
-						//char* strPos;
-						//strPos = strchr(line, ' ');
-						//double longitude = atof(line);
-						//double latitude = atof(line + int(strPos - line + 1));
-
-						//if (abs(longitude) >= 180.0) longitude = longitude / abs(longitude) * longitude * 0.99999; // no overflow, please
-						//if (abs(latitude) >= 90.0) latitude = latitude / abs(latitude) * latitude * 0.99999; // no overflow, please
-
 						// We'll work in radians here
 						longitude *= RAD;
 						latitude *= RAD;
@@ -1453,19 +2348,29 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 			if (debugInformation)
 			{
+				skp->SetFont(GetDefaultFont(0));
+				skp->SetTextAlign();
 				sprintf(cbuf, "Using cache!");
 				skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
 				textPos++;
 
 				if (vertexCounter == totalVertices)
 				{
-					sprintf(cbuf, "Read %i of %i vertices. Success!", vertexCounter, totalVertices);
+					sprintf(cbuf, "Read %i of %i vertices.", vertexCounter, totalVertices);;
+					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+					textPos++;
+
+					sprintf(cbuf, "Success!");
 					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
 					textPos++;
 				}
 				else
 				{
-					sprintf(cbuf, "Read %i of %i vertices. Failed!", vertexCounter, totalVertices);
+					sprintf(cbuf, "Read %i of %i vertices.", vertexCounter, totalVertices);
+					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
+					textPos++;
+
+					sprintf(cbuf, "Failed!");
 					skp->Text(textDX, textDY * textPos, cbuf, strlen(cbuf));
 					textPos++;
 				}
@@ -1473,9 +2378,15 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 		}
 	}
 
-	// Draw surface bases
+	*txtPos = textPos; // update counter
+}
+
+void MapMFD::MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp)
+{
+	// Draw bases
 	skp->SetPen(baseBox);
 	skp->SetTextColor(DEFAULT_COLOURS.BASE);
+	skp->SetTextAlign(); // default text alignement (left, top)
 	for (int i = 0; i < (int)oapiGetBaseCount(ref); i++)
 	{
 		double baseLatitude, baseLongitude;
@@ -1493,7 +2404,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 		}
 	}
 
-	// Draw vessels
+	// Draw all vessels at planet (if user wants it)
 	if (showVessels)
 	{
 		for (int i = 0; i < (int)oapiGetVesselCount(); i++)
@@ -1501,29 +2412,32 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			OBJHANDLE vesselH = oapiGetVesselByIndex(i);
 			VESSEL* veI = oapiGetVesselInterface(vesselH);
 
-			if (veI->GetSurfaceRef() == ref)
+			if (veI->GetSurfaceRef() == ref && !ObjectAlreadyInTarget(vesselH))
 			{
-				if (!ObjectAlreadyInTarget(vesselH))
-				{
-					double objLong, objLat, objRad;
-					GetObjectEquPos(vesselH, &objLong, &objLat, &objRad);
+				double objLong, objLat, objRad;
+				GetObjectEquPos(vesselH, &objLong, &objLat, &objRad);
 
-					// Fetch object name
-					char nameString[20];
-					oapiGetObjectName(vesselH, nameString, 20);
+				// Fetch object name
+				char nameString[20];
+				oapiGetObjectName(vesselH, nameString, 20);
 
-					// Finally, draw current position, so that it's on top.
-					skp->SetPen(targetPosition);
-					skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BOTTOM);
-					skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
-					DrawFeature(objLong, objLat, 10, CROSS, skp, nameString);
-				}
+				// Finally, draw current position, so that it's on top.
+				skp->SetPen(targetPosition);
+				skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BOTTOM);
+				skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
+				DrawFeature(objLong, objLat, 10, CROSS, skp, nameString);
 			}
 		}
 	}
+}
+
+void MapMFD::MakeTargets(oapi::Sketchpad* skp, double currentLong, double currentLat, int *infoLinesDrwn)
+{
+	char cbuf[100];
+	int infoLinesDrawn = *infoLinesDrwn;
 
 	// Draw orbit track of targets
-	int infoLinesDrawn = 0;
+	//int infoLinesDrawn = 0; // this is instead handeled in MapScreen (the parent function)
 	for (int i = 0; i < numTargets; i++)
 	{
 		int type = oapiGetObjectType(targets[i]); // the object type we have
@@ -1589,12 +2503,12 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			FormatValue(trueDist, 20, length(tgtPos));
 
 			// Find ground distance.
-			FormatValue(orthoDist, 20, oapiOrthodome(currentLongTarget, currentLatTarget, currentLong, currentLat)* refRad);
+			FormatValue(orthoDist, 20, oapiOrthodome(currentLongTarget, currentLatTarget, currentLong, currentLat) * refRad);
 
 			// And also remember to draw target info
 			char altStr[20];
 			FormatValue(altStr, 20, currentRadTarget - refRad);
-			skp->SetFont(configFont);
+			skp->SetFont(GetDefaultFont(1));
 			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
 			sprintf(cbuf, "TGT: %s [%s, Alt%s, Dst%s(%s)]", nameString, GetCoordinateString(currentLongTarget, currentLatTarget), altStr, trueDist, orthoDist + 1); // FormatValue returns an annoying space in the beginning.
@@ -1605,7 +2519,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 				infoLinesDrawn++;
 				sprintf(cbuf, "TGT: %s [%s,", nameString, GetCoordinateString(currentLongTarget, currentLatTarget));
-				skp->Text(textDX, textDY* (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 				infoLinesDrawn++;
 			}
 			else
@@ -1631,7 +2545,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			FormatValue(trueDist, 20, length(vesselPos - coordPos));
 
 			// Find ground distance. Luckily, that is easier.
-			FormatValue(orthoDist, 20, oapiOrthodome(longi, lati, currentLong, currentLat)* refRad);
+			FormatValue(orthoDist, 20, oapiOrthodome(longi, lati, currentLong, currentLat) * refRad);
 
 			// Bearing to base
 			double baseBearing = atan2(sin(longi - currentLong) * cos(lati), cos(currentLat) * sin(lati) - sin(currentLat) * cos(lati) * cos(longi - currentLong));
@@ -1640,18 +2554,18 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			// And also remember to draw target info
 			char nameStr[20];
 			oapiGetObjectName(targets[i], nameStr, 20);
-			skp->SetFont(configFont);
+			skp->SetFont(GetDefaultFont(1));
 			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
 			sprintf(cbuf, "BSE: %s [%s, Dst%s(%s), Brg %05.1f\u00B0]", nameStr, GetCoordinateString(longi, lati), trueDist, orthoDist + 1, baseBearing * DEG);
 			if (int(skp->GetTextWidth(cbuf)) > W)
 			{
 				// Draw from the bottom, so last part first
-				sprintf(cbuf, "  Dst%s(%s), Brg %05.1f\u00B0]", trueDist, orthoDist + 1, baseBearing* DEG);
-				skp->Text(textDX, textDY* (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				sprintf(cbuf, "  Dst%s(%s), Brg %05.1f\u00B0]", trueDist, orthoDist + 1, baseBearing * DEG);
+				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 				infoLinesDrawn++;
 				sprintf(cbuf, "BSE: %s [%s,", nameStr, GetCoordinateString(longi, lati));
-				skp->Text(textDX, textDY* (20 - infoLinesDrawn), cbuf, strlen(cbuf));
+				skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 				infoLinesDrawn++;
 			}
 			else
@@ -1665,7 +2579,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 			double longiDeg, latiDeg, longi, lati;
 			longiDeg = targetCoord[i][0];
 			latiDeg = targetCoord[i][1];
-			longi = longiDeg * RAD;
+			longi = normangle(longiDeg * RAD);
 			lati = latiDeg * RAD;
 			skp->SetPen(targetOrbitTrack);
 			DrawFeature(longi, lati, 6, RINGS, skp, "");
@@ -1690,13 +2604,22 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 
 			// Write info
 			sprintf(cbuf, "COOR: [%s, Dst%s(%s), Brg %05.1f\u00B0]", GetCoordinateString(longi, lati), trueDist, orthoDist + 1, baseBearing * DEG);
-			skp->SetFont(configFont);
+			skp->SetFont(GetDefaultFont(1));
 			skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
 			skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
 			skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 			infoLinesDrawn++;
 		}
 	}
+
+	*infoLinesDrwn = infoLinesDrawn;
+}
+
+void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLat, double currentRad, int *infoLinesDrwn)
+{
+	double simt = oapiGetSimTime(); // sim time
+	char cbuf[100];
+	int infoLinesDrawn = *infoLinesDrwn;
 
 	// Draw ship historic track, but only if in ground track view
 	if (orbitTrackGround && showHistory)
@@ -1751,20 +2674,67 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	skp->SetPen(mainOrbitTrack);
 	DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // main orbit track
 
+	// Draw marker for a pre-determined altitude. Useful if you want to know where you go below e.g. 60 km during reentry.
+	double radiusToDraw = drawSpecificAlt + refRad;
+	if (orbitTrackGround && drawSpecificAlt != 0.0 && radiusToDraw > prm.PeD) // in orbit track, have set an altitude, and it is above perigee
+	{
+		if (el.e > 1.0 || (el.e < 1.0 && radiusToDraw < prm.ApD)) // hyperbolic, or elliptical orbit and within Pe and Ap (Pe check above)
+		{
+			// The TrA at where the intersections occur
+			double TrAatAlt1 = acos((el.a / radiusToDraw * (1.0 - el.e * el.e) - 1.0) / el.e);
+			//if (el.e > 1.0) TrAatAlt1 = acos((el.a / radiusToDraw * (el.e * el.e - 1.0) - 1.0) / el.e);
+			double TrAatAlt2 = PI2 - TrAatAlt1; // happens two times per orbit (up and down crossing)
+
+			// The MnA at where the intersections occur
+			double futureMnA1 = TrA2MnA(TrAatAlt1, el.e);
+			double futureMnA2 = TrA2MnA(TrAatAlt2, el.e);
+
+			if (el.e < 1.0)
+			{
+				// Make them happen in the future
+				if (futureMnA1 < prm.MnA) futureMnA1 += PI2;
+				if (futureMnA2 < prm.MnA) futureMnA2 += PI2;
+			}
+
+			double meanMotion = PI2 / prm.T;
+			if (el.e > 1.0) meanMotion = sqrt(refMu / pow(-el.a, 3));
+			double timeToThat1 = (futureMnA1 - prm.MnA) / meanMotion;
+			double timeToThat2 = (futureMnA2 - prm.MnA) / meanMotion;
+
+			// Draw info
+			double altLong, altLat;
+			skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
+			char altChar[20];
+			FormatValue(altChar, 20, drawSpecificAlt);
+			// First occurance:
+			if (timeToThat1 > 0.0 && !(prm.PeT < timeToThat1 && prm.PeD < refRad)) // in the future (hyperbolic), and don't display the upgoing point if hitting the ground first
+			{
+				GetEquPosInXSeconds(timeToThat1, el, prm, currentLong, &altLong, &altLat);
+				DrawFeature(altLong, altLat, 5, BOX, skp, altChar);
+			}
+			// And second occurrance:
+			if (timeToThat2 > 0.0 && !(prm.PeT < timeToThat2 && prm.PeD < refRad)) // in the future (hyperbolic), and don't display the upgoing point if hitting the ground first
+			{
+				GetEquPosInXSeconds(timeToThat2, el, prm, currentLong, &altLong, &altLat);
+				DrawFeature(altLong, altLat, 5, BOX, skp, altChar);
+			}
+		}
+	}
+
 	// Draw periapsis and apoapsis points in ground track (if they exist)
 	if (orbitTrackGround && el.e < 1.0 && !(v->GroundContact()) && !(prm.PeD < refRad && posangle(prm.MnA) > PI)) // we have an apogee, and we're not suborbital AND past apogee
 	{
-		double apoLong, apoLat, apoSpeed;
-		GetEquPosInXSeconds(prm.ApT, el, prm, currentLong, &apoLong, &apoLat, &apoSpeed);
+		double apoLong, apoLat;
+		GetEquPosInXSeconds(prm.ApT, el, prm, currentLong, &apoLong, &apoLat);
 		skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
 		DrawFeature(apoLong, apoLat, 5, BOX, skp, "Ap");
 	}
 
 	if (orbitTrackGround && prm.PeD > refRad && (el.e < 1.0 || normangle(prm.TrA) < 0.0)) // we have an upcoming perigee that is above surface
 	{
-		double periLong, periLat, periSpeed;
-		GetEquPosInXSeconds(prm.PeT, el, prm, currentLong, &periLong, &periLat, &periSpeed);
-		if (prm.PeT < 0.0) sprintf(oapiDebugString(), "Warning, we're plotting perigee, but it has occured! Debug %.2f", simt);
+		double periLong, periLat;
+		GetEquPosInXSeconds(prm.PeT, el, prm, currentLong, &periLong, &periLat);
+		if (prm.PeT < 0.0) sprintf(oapiDebugString(), "ERROR! We're plotting perigee, but it has occured! Debug %.2f", simt);
 		skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
 		DrawFeature(periLong, periLat, 5, BOX, skp, "Pe");
 	}
@@ -1803,12 +2773,14 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	v->GetGroundspeedVector(FRAME_HORIZON, groundVec);
 	courseDirection = posangle(atan2(groundVec.x, groundVec.z));
 
-	// Altitude fill, a kind of landing radar
+	// Elevation fill, a kind of landing radar
 	if (displayElevationRadar)
 	{
 		const int radialSteps = 10;
 		const int angularSteps = 16;
-		const double metrePerColourStep = 10.0; // 10 m gives max range 1280 m in each axis
+		//double previousAngularElevation[angularSteps] = { -PI05 }; // save the previous surface elevation angle, so that we stop displaying if the outside point is behind the mountain in front
+		const double metrePerColourStep = 5.0; // 10 m gives max range 1280 m in each axis
+		skp->SetTextColor(0x00FF00); // for info text
 
 		for (int i = 1; i < radialSteps + 1; i++) // radial iteration, starting from 1, as 0 is our location
 		{
@@ -1825,70 +2797,22 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 				double latPoint = asin(sin(currentLat) * cos(radialView) + cos(currentLat) * sin(radialView) * cos(bearing));
 				double longPoint = normangle(currentLong + atan2(sin(bearing) * sin(radialView) * cos(currentLat), cos(radialView) - sin(currentLat) * sin(latPoint)));
 
-				double elevation = oapiSurfaceElevation(ref, longPoint, latPoint);
+				double elevation = oapiSurfaceElevation(ref, longPoint, latPoint); // surface elevation
 
-				// Set colour to middle intenisty (128) for currentElevation, and scale to metrePerColourStep
-				//double colHue = 35.0;
-				//double colourValue = 0.75;
-				//double colourSaturation = 1.0 - abs(elevation - currentElevation) / metrePerColourStep * 1e-2;
-				//// Limit to valid colour range
-				//if (colourSaturation < 0) colourSaturation = 0;
-				//else if (colourSaturation > 100) colourSaturation = 100;
+				int colourElev = 128 + int((elevation - currentElevation) / metrePerColourStep);
 
-				//double Cval = colourValue * colourSaturation;
-				//double Xval = Cval * (1.0 - abs(fmod(colHue / 60.0, 2.0) - 1.0));
-				//double mVal = colourValue - Cval;
-				//double Rval = Cval;
-				//double Gval = Xval;
-				//double Bval = 0.0;
+				if (colourElev < 0) colourElev = 0;
+				else if (colourElev > 255) colourElev = 255;
 
-				//int valR = int((Rval + mVal) * 255.0);
-				//int valG = int((Gval + mVal) * 255.0);
-				//int valB = int((Bval + mVal) * 255.0);
+				DWORD elevColour = oapiGetColour(0, 255 - colourElev, colourElev); // use red for positive elevation (crash into mountain), green for negative elevation (good clearance)
 
-				//DWORD elevColour = oapiGetColour(valB, valG, valR);
-				int colIntentsity = 128 + int((elevation - currentElevation) / metrePerColourStep);
-				if (colIntentsity < 0) colIntentsity = 0;
-				else if (colIntentsity > 255) colIntentsity = 255;
-				DWORD elevColour = oapiGetColour(colIntentsity, colIntentsity, colIntentsity);
+				oapi::Pen* elevPen = oapiCreatePen(1, 5, elevColour);
+				skp->SetPen(elevPen);
+				//char debugElev[10];
+				//sprintf(debugElev, "%i", colourElev);
+				DrawFeature(longPoint, latPoint, 10, CROSS, skp, ""); // text doesn't scale nicely, so don't display any
 
-
-				// The four edges of our polygon
-				double spanCoords[4][2]; // four edges of a polygon, inLeft, outLeft, outRight, inRight
-				spanCoords[0][1] = asin(sin(currentLat) * cos(radialViewInner) + cos(currentLat) * sin(radialViewInner) * cos(bearingLeft));
-				spanCoords[0][0] = normangle(currentLong + atan2(sin(bearingLeft) * sin(radialViewInner) * cos(currentLat), cos(radialViewInner) - sin(currentLat) * sin(spanCoords[0][1])));
-				spanCoords[1][1] = asin(sin(currentLat) * cos(radialViewOuter) + cos(currentLat) * sin(radialViewOuter) * cos(bearingLeft));
-				spanCoords[1][0] = normangle(currentLong + atan2(sin(bearingLeft) * sin(radialViewOuter) * cos(currentLat), cos(radialViewOuter) - sin(currentLat) * sin(spanCoords[1][1])));
-				spanCoords[2][1] = asin(sin(currentLat) * cos(radialViewOuter) + cos(currentLat) * sin(radialViewOuter) * cos(bearingRight));
-				spanCoords[2][0] = normangle(currentLong + atan2(sin(bearingRight) * sin(radialViewOuter) * cos(currentLat), cos(radialViewOuter) - sin(currentLat) * sin(spanCoords[2][1])));
-				spanCoords[3][1] = asin(sin(currentLat) * cos(radialViewInner) + cos(currentLat) * sin(radialViewInner) * cos(bearingRight));
-				spanCoords[3][0] = normangle(currentLong + atan2(sin(bearingRight) * sin(radialViewInner) * cos(currentLat), cos(radialViewInner) - sin(currentLat) * sin(spanCoords[3][1])));
-
-				oapi::IVECTOR2 spanPixels[4];
-				for (int j = 0; j < 4; j++)
-				{
-					double lonTra, latTra;
-					TransformPoint(spanCoords[j][0], spanCoords[j][1], &lonTra, &latTra, proj);
-					spanPixels[j].x = int(W / 2 + lonTra / PI * W / 2);
-					spanPixels[j].y = int(H / 2 - latTra / PI05 * W / 4);
-				}
-
-				//oapi::Pen *elevPen = oapiCreatePen(1, 10, elevColour);
-				oapi::Brush* elevBrush = oapiCreateBrush(elevColour);
-				//skp->SetPen(elevPen);
-				skp->SetPen(mainOrbitTrack);
-				skp->SetBrush(elevBrush);
-				skp->Polygon(spanPixels, 4);
-				//oapiReleasePen(elevPen);
-				oapiReleaseBrush(elevBrush);
-
-				// DEBUG!
-				skp->SetPen(mainOrbitTrack);
-				skp->SetTextColor(0x00FF00);
-				char lab[10];
-				sprintf(lab, "%.1f m", elevation - currentElevation);
-				DrawFeature(longPoint, latPoint, 2, CROSS, skp, lab);
-
+				oapiReleasePen(elevPen);
 			}
 		}
 	}
@@ -1902,7 +2826,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	// And also remember to draw our own info
 	char altStr[20];
 	FormatValue(altStr, 20, currentRad - refRad);
-	skp->SetFont(configFont);
+	skp->SetFont(GetDefaultFont(1));
 	skp->SetTextColor(DEFAULT_COLOURS.MAINTRACK);
 	skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BASELINE);
 	sprintf(cbuf, "SHP: %s [%s, Alt%s, Crs %05.1f\u00B0]", v->GetName(), GetCoordinateString(currentLong, currentLat), altStr, courseDirection * DEG);
@@ -1921,260 +2845,8 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 		skp->Text(textDX, textDY * (20 - infoLinesDrawn), cbuf, strlen(cbuf));
 		infoLinesDrawn++;
 	}
-}
 
-void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
-{
-	// Title
-	char mfdTitle[50];
-	sprintf(mfdTitle, "Map: Display parameters");
-	Title(skp, mfdTitle); // Draws the MFD title
-
-	int textX0 = W / 80;
-	int dY = H / 16;
-	int textY0 = H / 20 * 2 - currentTopListed * dY;
-	int secondRowIndent = 60;
-
-	char cbuf[100];
-	skp->SetFont(configFont); // Set to the correct font
-
-	sprintf(cbuf, "Orbit lines");
-	skp->Text(textX0, textY0 + int(CONFIGTRACKMODE) * dY, cbuf, strlen(cbuf));
-	if (orbitTrackGround) sprintf(cbuf, "Groundtrack");
-	else sprintf(cbuf, "Orbit plane");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKMODE) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Elevation radar");
-	skp->Text(textX0, textY0 + int(CONFIGRADAR) * dY, cbuf, strlen(cbuf));
-	if (displayElevationRadar) sprintf(cbuf, "On");
-	else sprintf(cbuf, "Off");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRADAR) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Display other vessels");
-	skp->Text(textX0, textY0 + int(CONFIGSHOWVESSELS) * dY, cbuf, strlen(cbuf));
-	if (showVessels) sprintf(cbuf, "On");
-	else sprintf(cbuf, "Off");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGSHOWVESSELS) * dY, cbuf, strlen(cbuf));
-
-	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track mode, so indicate that by graying out if not in that
-	sprintf(cbuf, "Display history track");
-	skp->Text(textX0, textY0 + int(CONFIGSHOWHISTORY) * dY, cbuf, strlen(cbuf));
-	if (showHistory) sprintf(cbuf, "On");
-	else sprintf(cbuf, "Off");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGSHOWHISTORY) * dY, cbuf, strlen(cbuf));
-	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
-
-	sprintf(cbuf, "Projection");
-	skp->Text(textX0, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, GetProjectionName());
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Azimuth. Equidist. pole");
-	skp->Text(textX0, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
-	if (azimuthalEquidistantNortPole) sprintf(cbuf, "North");
-	else sprintf(cbuf, "South");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Reset map pan");
-	skp->Text(textX0, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%.1f\u00B0N %.1f\u00B0E", centreLat * DEG, centreLong * DEG);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Grid angle sep.");
-	skp->Text(textX0, textY0 + int(CONFIGGRIDSEP) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%i\u00B0", gridAngleSeparation);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGGRIDSEP) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Grid angle res.");
-	skp->Text(textX0, textY0 + int(CONFIGGRIDRES) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%i\u00B0", gridResolution);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGGRIDRES) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Map skip every N line");
-	skp->Text(textX0, textY0 + int(CONFIGMAPRES) * dY, cbuf, strlen(cbuf));
-	if (autoResolution) sprintf(cbuf, "AUTO");
-	else sprintf(cbuf, "%i", skipEveryNLines);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGMAPRES) * dY, cbuf, strlen(cbuf));
-
-	if (!autoResolution) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects auto resolution state, so indicate that by graying out if not in auto
-	sprintf(cbuf, "Map auto resol. lines");
-	skp->Text(textX0, textY0 + int(CONFIGMAPAUTOSIZE) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%i", defaultMapLinesAmount);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGMAPAUTOSIZE) * dY, cbuf, strlen(cbuf));
-	if (!autoResolution) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
-
-	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
-	sprintf(cbuf, "Orbit track time step");
-	skp->Text(textX0, textY0 + int(CONFIGTRACKANGLEDELTA) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%.3f\u00B0", orbitTrackAngleDelta);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKANGLEDELTA) * dY, cbuf, strlen(cbuf));
-	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
-
-	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
-	sprintf(cbuf, "Max orbits displayed");
-	skp->Text(textX0, textY0 + int(CONFIGTRACKNUMORBITS) * dY, cbuf, strlen(cbuf));
-	double iterationStop = GROUND_TRACK_ITERATION_MAX_STEPS / (360.0 / orbitTrackAngleDelta); // iteration stops sooner if too high resolution.
-	if (iterationStop < orbitTrackOrbitsNumber) sprintf(cbuf, "%.2f (%.2f)", orbitTrackOrbitsNumber, iterationStop);
-	else sprintf(cbuf, "%.2f", orbitTrackOrbitsNumber);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKNUMORBITS) * dY, cbuf, strlen(cbuf));
-	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
-
-	sprintf(cbuf, "Circle of view resolution");
-	skp->Text(textX0, textY0 + int(CONFIGPLANETVIEWSEGMENTS) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%i", viewCircleResolution);
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPLANETVIEWSEGMENTS) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Reset MFD");
-	skp->Text(textX0, textY0 + int(CONFIGRESETALL) * dY, cbuf, strlen(cbuf));
-	if (resetCommand) sprintf(cbuf, "Press F8");
-	else sprintf(cbuf, "OFF");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRESETALL) * dY, cbuf, strlen(cbuf));
-
-	sprintf(cbuf, "Show debug info");
-	skp->Text(textX0, textY0 + int(CONFIGDEBUGINFO) * dY, cbuf, strlen(cbuf));
-	if (debugInformation) sprintf(cbuf, "ON");
-	else sprintf(cbuf, "OFF");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGDEBUGINFO) * dY, cbuf, strlen(cbuf));
-
-
-	// Create selection box
-	skp->SetPen(mainOrbitTrack); // re-use old pen.
-	skp->Rectangle(textX0 - 5, textY0 + int(configSelection) * dY, W - textX0, textY0 + dY + int(configSelection) * dY);
-}
-
-void MapMFD::ReferenceListScreen(oapi::Sketchpad* skp)
-{
-	// Title
-	char mfdTitle[50];
-	sprintf(mfdTitle, "Map: Reference select");
-	Title(skp, mfdTitle); // Draws the MFD title
-
-	int textX0 = W / 80;
-	int textY0 = H / 20 * 2;
-	int dY = H / 16;
-	int secondRowIndent = 60;
-
-	char cbuf[100];
-	skp->SetFont(configFont); // Set to the correct font
-
-	if (updateReferenceCache) BuildReferenceCache(); // create list if it doesn't already exist.
-
-	// Finally print list in sorted order
-
-	int lineNumber = -currentReferenceTopListed;
-
-	for (int i = 0; i < totalPlanets; i++)
-	{
-		sprintf(cbuf, sortedPlanetsCache[i].name);
-		skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-		lineNumber++;
-
-		if (i == referenceExpand)
-		{
-			for (int k = 0; k < sortedPlanetsCache[i].moonCount; k++)
-			{
-				sprintf(cbuf, sortedPlanetsCache[i].moonName[k]);
-				skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-				lineNumber++;
-			}
-		}
-	}
-
-	// Create selection box
-	skp->SetPen(mainOrbitTrack); // re-use old pen.
-	skp->Rectangle(textX0 - 5, textY0 + (referenceSelection - currentReferenceTopListed) * dY, W - textX0, textY0 + dY + (referenceSelection - currentReferenceTopListed) * dY);
-}
-
-void MapMFD::TargetListScreen(oapi::Sketchpad* skp)
-{
-	// Title
-	char mfdTitle[50];
-	sprintf(mfdTitle, "Map: Target select. Number: %i", numTargets);
-	Title(skp, mfdTitle); // Draws the MFD title
-
-	int textX0 = W / 80;
-	int textY0 = H / 20 * 2;
-	int dY = H / 16;
-	int secondRowIndent = 60;
-
-	char cbuf[100];
-	skp->SetFont(configFont); // Set to the correct font
-
-	int lineNumber = -currentTargetTopListed;
-
-	// Display bases on reference object
-	sprintf(cbuf, "Spaceports >");
-	skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-	lineNumber++;
-
-	DWORD defaultColour = 0xFFFFFF; // white
-
-	if (targetExpand == EXPANDSPACEPORTS)
-	{
-		for (int i = 0; i < (int)oapiGetBaseCount(ref); i++)
-		{
-			OBJHANDLE objectHandle = oapiGetBaseByIndex(ref, i);
-			oapiGetObjectName(objectHandle, cbuf, 20);
-			if (ObjectAlreadyInTarget(objectHandle)) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
-			skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-			skp->SetTextColor(defaultColour);
-			lineNumber++;
-		}
-	}
-
-	// Display vessels around reference object
-	sprintf(cbuf, "Spacecraft >");
-	skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-	lineNumber++;
-
-	if (targetExpand == EXPANDSPACECRAFT)
-	{
-		for (int i = 0; i < (int)oapiGetVesselCount(); i++)
-		{
-			OBJHANDLE listVessel = oapiGetVesselByIndex(i);
-			VESSEL* ves = oapiGetVesselInterface(listVessel);
-			if (ves->GetSurfaceRef() == ref)
-			{
-				oapiGetObjectName(listVessel, cbuf, 20);
-				if (ObjectAlreadyInTarget(listVessel)) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
-				skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-				skp->SetTextColor(defaultColour);
-				lineNumber++;
-			}
-		}
-	}
-
-	// Display moons around reference object
-	sprintf(cbuf, "Moons >");
-	skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-	lineNumber++;
-
-	if (targetExpand == EXPANDMOONS)
-	{
-		if (updateReferenceCache) BuildReferenceCache();
-
-		for (int i = 0; i < totalPlanets; i++)
-		{
-			if (sortedPlanetsCache[i].handle == ref)
-			{
-				// We found our planet. Now write out the moons, and then break
-				for (int k = 0; k < sortedPlanetsCache[i].moonCount; k++)
-				{
-
-					sprintf(cbuf, sortedPlanetsCache[i].moonName[k]);
-					if (ObjectAlreadyInTarget(sortedPlanetsCache[i].moonHandle[k])) skp->SetTextColor(DEFAULT_COLOURS.TARGETTRACK);
-					skp->Text(4 * textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
-					skp->SetTextColor(defaultColour);
-					lineNumber++;
-				}
-				break;
-			}
-		}
-	}
-
-	// Create selection box
-	skp->SetPen(mainOrbitTrack); // re-use old pen.
-	skp->Rectangle(textX0 - 5, textY0 + (targetSelection - currentTargetTopListed) * dY, W - textX0, textY0 + dY + (targetSelection - currentTargetTopListed) * dY);
+	*infoLinesDrwn = infoLinesDrawn;
 }
 
 void MapMFD::BuildReferenceCache(void)
@@ -2385,7 +3057,7 @@ bool MapMFD::DrawLine(double long0, double lat0, double long1, double lat1, oapi
 		pointsOutside += 1;
 		return false;
 	}
-	else if (safetyCheck && (pow(transformedLongitude0 - transformedLongitude1, 2.0) + pow(transformedLatitude0 - transformedLatitude1, 2.0)) > 90.0 * RAD * double(centreZoom)) // multiply by centreZoom, so that we don't delete zoomed objects
+	else if (safetyCheck && (pow(transformedLongitude0 - transformedLongitude1, 2) + pow(transformedLatitude0 - transformedLatitude1, 2)) > 90.0 * RAD * double(centreZoom)) // multiply by centreZoom, so that we don't delete zoomed objects
 	{
 		// Don't plot, as the line is too long to look good, unless so specified by disabling safetyCheck
 		return false;
@@ -2408,17 +3080,19 @@ bool MapMFD::DrawFeature(double longitude, double latitude, int size, MAPFEATURE
 	int pxY = int(H / 2 - transformedLatitude / PI05 * W / 4);
 
 	skp->SetFont(mapObjectFont);
+	skp->SetBrush(NULL); // make inner fill transparent
+
+	// Label
+	if (strlen(label) > 0) skp->Text(pxX, pxY, label, strlen(label));
 
 	switch (feature)
 	{
 	case BOX:
 		skp->Rectangle(pxX - size, pxY - size, pxX + size, pxY + size);
-		if (strlen(label) > 0) skp->Text(pxX, pxY, label, strlen(label));
 		return true;
 	case CROSS:
 		skp->Line(pxX - size, pxY, pxX + size, pxY);
 		skp->Line(pxX, pxY - size, pxX, pxY + size);
-		if (strlen(label) > 0) skp->Text(pxX, pxY, label, strlen(label));
 		return true;
 	case RINGS:
 		skp->Ellipse(pxX - size, pxY - size, pxX + size, pxY + size);
@@ -2431,7 +3105,7 @@ bool MapMFD::DrawFeature(double longitude, double latitude, int size, MAPFEATURE
 void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp)
 {
 	// Plot the orbit track of a vessel
-	double futureLong, futureLat, futureSpeed;
+	double futureLong, futureLat;
 	double previousLong = currentLong, previousLat = currentLat; // initialise to current pos, in case first step is below ground.
 
 	if (orbitTrackGround)
@@ -2439,15 +3113,6 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 		double timeLimit;
 		if (el.e > 1.0) timeLimit = 1e6; // orbit period not defined for hyperbolic orbit
 		else timeLimit = min(1e6, prm.T * orbitTrackOrbitsNumber); // 1e6 seconds equals 11.5 days.
-		// I want to have an adaptive track time step. This is especially useful for hyperbolic, but also highly eccentric elliptical orbits.
-		// One such solution is to set the time step length inversely proportional to the ratio between orbital speed and maximum (perigee) speed.
-		//double currentSpeed = sqrt(refMu * (2.0 * (1.0 + el.e * cos(prm.TrA)) / (el.a * (1.0 - el.e * el.e)) - 1.0 / el.a));
-		//double maxSpeed;
-		//if (el.e > 1.0 && prm.MnA > 0.0) maxSpeed = currentSpeed; // we're past perigee, and will always go slower than now
-		//else if (prm.PeD < refRad) maxSpeed = sqrt(refMu * (2.0 / refRad - 1.0 / el.a)); // we're going to crash into the planet, so use max attained speed (crashing speed)
-		//else maxSpeed = sqrt(refMu / el.a * (1.0 + el.e) / (1.0 - el.e));
-		//double timeDelta = double(orbitTrackTimeDelta) * maxSpeed / currentSpeed;
-		//double time = 0.0;
 
 		double stepTrA = prm.TrA;
 		double time = 0.0;
@@ -2458,7 +3123,7 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 
 		while (aboveSurface && time < timeLimit && n < GROUND_TRACK_ITERATION_MAX_STEPS)
 		{
-			aboveSurface = GetEquPosInXSeconds(time, el, prm, currentLong, &futureLong, &futureLat, &futureSpeed);
+			aboveSurface = GetEquPosInXSeconds(time, el, prm, currentLong, &futureLong, &futureLat);
 
 			if (n > 0 && aboveSurface) // must be above surface, as we don't want to draw a line of it falling inside the planet
 			{
@@ -2468,19 +3133,12 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 				previousLat = futureLat;
 			}
 
-			//timeDelta = double(orbitTrackTimeDelta) * maxSpeed / futureSpeed;
-
 			stepTrA += angleDelta;
-			//double EccAn = EccentricAnomaly(el.e, stepTrA);
 			double futureMnA = TrA2MnA(stepTrA, el.e);
 			if (el.e > 1.0)
 			{
-				//EccAn = 2.0 * atanh(sqrt((el.e - 1.0) / (el.e + 1.0)) * tan(stepTrA / 2.0));
-				//futureMnA = el.e * sinh(EccAn) - EccAn;
-				double meanMotion = sqrt(refMu / pow(-el.a, 3.0));
+				double meanMotion = sqrt(refMu / pow(-el.a, 3));
 				time = (futureMnA - prm.MnA) / meanMotion;
-
-				//if (tan(stepTrA / 2.0) * sqrt((el.e - 1.0) / (el.e + 1.0)) > 1.0) time = timeLimit * 2.0; // TrA can max become this certain value for a hyperbolic (physical fact, not my limitation). Then force stop loop by setting time over limit
 			}
 			else
 			{
@@ -2488,7 +3146,6 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 				time = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
 			}
 
-			//time += timeDelta;
 			n++;
 		}
 
@@ -2497,7 +3154,7 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 			DrawFeature(previousLong, previousLat, 3, BOX, skp, "");
 		}
 	}
-	else
+	else // orbit track plane mode
 	{
 		double firstLong = 0.0, firstLat = 0.0;
 		for (int k = 0; k < W; k++)
@@ -2559,7 +3216,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 	{
 	case EQUIRECTANGULAR:
 		// https://en.wikipedia.org/wiki/Equirectangular_projection
-		transLong = longitude/* * cos(centreLat)*/;
+		transLong = longitude;
 		transLat = latitude - centreLat;
 		break;
 	case MILLER:
@@ -2570,7 +3227,8 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 	case MERCATOR:
 		// https://en.wikipedia.org/wiki/Mercator_projection
 		transLong = longitude;
-		transLat = log(tan(PI / 4.0 + latitude / 2.0)) - log(tan(PI / 4.0 + centreLat / 2.0));;
+		if (abs(latitude) == PI05) latitude *= 0.9999; // avoid log(+-inf)
+		transLat = log(tan(PI / 4.0 + latitude / 2.0)) - log(tan(PI / 4.0 + centreLat / 2.0));
 		break;
 	case TRANSVERSEMERCATOR:
 		// https://en.wikipedia.org/wiki/Transverse_Mercator_projection
@@ -2587,33 +3245,62 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		A1 = 1.340264, A2 = -0.081106, A3 = 0.000893, A4 = 0.003796;
 		theta = asin(sqrt(3.0) / 2.0 * sin(latitude));
 
-		transLong = 2.0 * sqrt(3.0) * longitude * cos(theta) / (3.0 * (9.0 * A4 * pow(theta, 8.0) + 7.0 * A3 * pow(theta, 6.0) + 3.0 * A2 * pow(theta, 2.0) + A1));
-		transLat = A4 * pow(theta, 9.0) + A3 * pow(theta, 7.0) + A2 * pow(theta, 3.0) + A1 * (theta);
+		double powtheta2, powtheta3, powtheta4, powtheta5, powtheta6, powtheta7, powtheta8, powtheta9; // improve performance, as pow is insanely slow
+		powtheta2 = theta * theta;
+		powtheta3 = powtheta2 * theta;
+		powtheta4 = powtheta3 * theta;
+		powtheta5 = powtheta4 * theta;
+		powtheta6 = powtheta5 * theta;
+		powtheta7 = powtheta6 * theta;
+		powtheta8 = powtheta7 * theta;
+		powtheta9 = powtheta8 * theta;
+		transLong = 2.0 * sqrt(3.0) * longitude * cos(theta) / (3.0 * (9.0 * A4 * powtheta8 + 7.0 * A3 * powtheta6 + 3.0 * A2 * powtheta2 + A1));
+		transLat = A4 * powtheta9 + A3 * powtheta7 + A2 * powtheta3 + A1 * (theta);
 		// Now find new theta for centreLat, and subtract that from transLat.
 		theta = asin(sqrt(3.0) / 2.0 * sin(centreLat));
-		transLat -= A4 * pow(theta, 9.0) + A3 * pow(theta, 7.0) + A2 * pow(theta, 3.0) + A1 * (theta);
+		powtheta3 = theta * theta * theta; // update relevant powers of theta
+		powtheta7 = powtheta3 * powtheta3 * theta;
+		powtheta9 = powtheta7 * theta * theta;
+		transLat -= A4 * powtheta9 + A3 * powtheta7 + A2 * powtheta3 + A1 * (theta);
+
 		break;
-	case MOLLWEIDE: // NOT done. No centreLat.
+	case MOLLWEIDE:
 		// https://en.wikipedia.org/wiki/Mollweide_projection
-		theta = latitude;
+		theta = latitude - 0.2 * sin(latitude); // approximation for Newton's method, so that convergence is faster 
 		if (abs(latitude) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
 			theta = latitude / abs(latitude) * PI05; // set to sgn(lat) * PI05.
 		else
-			for (int i = 0; i < 5; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(latitude)) / (2.0 + 2.0 * cos(2.0 * theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(latitude)) / (2.0 + 2.0 * cos(2.0 * theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+
+		//A1 = 1.5553; // pol. factors
+		//A2 = -2.9641;
+		//A3 = 2.3413;
+		//A4 = 0.205; // sin factor
+
+		//// My own approximation of Mollweide to omit iteration. The whole problem is to solve 2*theta + sin(2*theta) = pi * sin(latitude) for theta
+		//k0 = abs(latitude); // helping number to reduce abs calculations
+		//if (k0 < 1.2) theta = latitude - A4 * sin(latitude);
+		//else theta = latitude / k0 * (A1 * k0 * k0 + A2 * k0 + A3); // sgn(latitude) * (x^2 ...)
 
 		transLong = 2.0 * sqrt(2.0) / PI * longitude * cos(theta);
 		transLat = sqrt(2.0) * sin(theta);
 
 		// now find new theta for centreLat, and subtract that from transLat.
-		theta = centreLat;
+		theta = centreLat - 0.2 * sin(centreLat);
 		if (abs(centreLat) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
 			theta = centreLat / abs(centreLat) * PI05; // set to sgn(lat) * PI05.
 		else
-			for (int i = 0; i < 5; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(centreLat)) / (2.0 + 2.0 * cos(2.0 * theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(centreLat)) / (2.0 + 2.0 * cos(2.0 * theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+		//
+		//// My own approximation of Mollweide to omit iteration. The whole problem is to solve 2*theta + sin(2*theta) = pi * sin(latitude) for theta
+		//k0 = abs(centreLat); // helping number to reduce abs calculations
+		//if (k0 < 1.2) theta = centreLat - A4 * sin(centreLat);
+		//else theta = centreLat / k0 * (A1 * k0 * k0 + A2 * k0 + A3); // sgn(latitude) * (x^2 ...)
+
 		transLat -= sqrt(2.0) * sin(theta);
 
 		break;
-	case ORTELIUSOVAL: // NOT done. Has centreLong, but no centreLat. Also check the first if statement, if we are to include the -centreLong term there.
+	case ORTELIUSOVAL:
 		// https://en.wikipedia.org/wiki/Ortelius_oval_projection
 		if (longitude == 0.0)
 		{
@@ -2624,7 +3311,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		{
 			theta = 0.5 * (PI * PI / (4.0 * abs(longitude)) + abs(longitude));
 			transLat = latitude;
-			if (abs(longitude) < PI05) transLong = abs(longitude) - theta + sqrt(theta * theta - pow(transLat, 2.0));
+			if (abs(longitude) < PI05) transLong = abs(longitude) - theta + sqrt(theta * theta - pow(transLat, 2));
 			else transLong = sqrt(PI * PI / 4.0 - latitude * latitude) + abs(longitude) - PI05;
 			if (longitude < 0.0) transLong = -abs(transLong);
 			else transLong = abs(transLong);
@@ -2632,7 +3319,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 			transLat -= centreLat;
 		}
 		break;
-	case WINKELTRIPEL: // NOT done
+	case WINKELTRIPEL:
 		// https://en.wikipedia.org/wiki/Winkel_tripel_projection
 		k0 = acos(2.0 / PI);
 		theta = acos(cos(latitude) * cos(longitude / 2.0));
@@ -2648,7 +3335,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 			transLat = 0.5 * (latitude + sin(latitude) / sin(theta) * theta) - centreLat;
 		}
 		break;
-	case RECTANGULARPOLYCONIC: // done, but check if atan2 is needed due to division by sin in k0
+	case RECTANGULARPOLYCONIC:
 		// https://en.wikipedia.org/wiki/Rectangular_polyconic_projection
 		if (latitude == 0.0) latitude = 1e-5; // avoid division by 0
 
@@ -2660,7 +3347,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLong = sin(theta) / tan(latitude);
 		transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
 		break;
-	case AZIMUTHALEQUIDISTANT: // done (I think. Alternavely check the atan2)
+	case AZIMUTHALEQUIDISTANT:
 		// https://en.wikipedia.org/wiki/Azimuthal_equidistant_projection
 		// Offset centreLat by PI05, so that we begin centering on the North Pole
 		if (azimuthalEquidistantNortPole) // centre North
@@ -2673,11 +3360,11 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 			else
 			{
 				theta = -atan2(cos(latitude) * sin(longitude), cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
-				k0 = -acos(sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude));
+				k0 = acos(sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude));
 			}
 
-			transLong = (k0)*sin(theta);
-			transLat = -(k0)*cos(theta);
+			transLong = -k0 * sin(theta);
+			transLat = k0 * cos(theta);
 		}
 		else // centre South
 		{
@@ -2692,11 +3379,11 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 				k0 = acos(sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude));
 			}
 
-			transLong = (k0)*sin(-theta);
-			transLat = -(k0)*cos(theta);
+			transLong = -k0 * sin(theta);
+			transLat = -k0 * cos(theta);
 		}
 
-		if (!(k0 <= 0.0 && -PI < k0))
+		if (!(0.0 <= k0 && k0 <= PI))
 		{
 			// If latitude and centreLat are equal (eg. in tracking mode), we get k0 undefined, probably from floating point error acos(x > 1.0). Then set manually to 0,0, which is correct value in such cases.
 			transLong = 0.0;
@@ -2704,7 +3391,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		}
 
 		break;
-	case LAMBERTAZIMUTHAL: // done
+	case LAMBERTAZIMUTHAL:
 		// https://mathworld.wolfram.com/LambertAzimuthalEqual-AreaProjection.html
 		if (abs(longitude) == PI) longitude *= 0.999; // avoid division by zero
 		theta = sqrt(2.0 / (1.0 + sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude)));
@@ -2712,7 +3399,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLong = theta * cos(latitude) * sin(longitude);
 		transLat = theta * (cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
 		break;
-	case CASSINI: // NOT done, but check atan2
+	case CASSINI:
 		// https://en.wikipedia.org/wiki/Cassini_projection
 		transLong = asin(cos(latitude) * sin(longitude));
 		transLat = atan2(sin(latitude), cos(latitude) * cos(longitude)) - centreLat;
@@ -2729,7 +3416,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 	return true;
 }
 
-bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude, double *currentSpeed)
+bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude)
 {
 	double LAN = el.theta;
 	double APe = el.omegab - LAN;
@@ -2747,7 +3434,7 @@ bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double c
 	double M = M0;
 
 	// TrA in x seconds
-	if (el.e > 1.0) M = M0 + sqrt(refMu / pow(-el.a, 3.0)) * t; // http://control.asu.edu/Classes/MAE462/462Lecture05.pdf page 37.
+	if (el.e > 1.0) M = M0 + sqrt(refMu / pow(-el.a, 3)) * t; // http://control.asu.edu/Classes/MAE462/462Lecture05.pdf page 37.
 	else M = fmod(M0 + PI2 * t / prm.T, PI2);
 	double TrA = MnA2TrA(M, el.e);
 	double TrA0 = prm.TrA;
@@ -2765,7 +3452,6 @@ bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double c
 
 	*longitude = longi;
 	*latitude = lati;
-	*currentSpeed = sqrt(refMu * (2.0 * (1.0 + el.e * cos(TrA)) / (el.a * (1.0 - el.e * el.e)) - 1.0 / el.a)); // for dynamic updating of orbit track
 
 	double orbitRad = el.a * (1.0 - el.e * el.e) / (1.0 + el.e * cos(TrA));
 	if (orbitRad > refRad) return true;
@@ -2803,7 +3489,7 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 	stateVel.y = buffer;
 
 
-	// Now we have state vectors in equatorial frame. Now calculate KOST.
+	// Now we have state vectors in equatorial frame. Then calculate KOST.
 	// Sources are https://downloads.rene-schwarz.com/download/M002-Cartesian_State_Vectors_to_Keplerian_Orbit_Elements.pdf for elliptical orbits,
 	// and https://en.wikipedia.org/wiki/Hyperbolic_trajectory for hyperbolic orbits.
 	double radius = length(statePos);
@@ -2828,7 +3514,7 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 
 	double energy = length2(stateVel) / 2.0 - refMu / length(statePos);
 	double SMa = -refMu / (2.0 * energy);
-	double period = PI2 * sqrt(pow(SMa, 3.0) / refMu);
+	double period = PI2 * sqrt(pow(SMa, 3) / refMu);
 	double MnA = eccentricAnomaly - eccentricity * sin(eccentricAnomaly);
 	if (eccentricity > 1.0) MnA = eccentricity * sinh(eccentricAnomaly) - eccentricAnomaly;
 
@@ -2841,7 +3527,7 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 
 	prm->EcA = eccentricAnomaly;
 	prm->TrA = TrA;
-	prm->T = period;
+	prm->T = period; // this will be erranous for hyperbolic orbits
 	//if (el.e > 1.0) prm->T = -1.0; // give it a sane value, for calculations sake
 	prm->MnA = MnA;
 }
@@ -2883,7 +3569,7 @@ char* MapMFD::GetProjectionName(void)
 
 char* MapMFD::GetCoordinateString(double longitude, double latitude)
 {
-	char coordinate[50];
+	static char coordinate[20];
 	if (longitude < 0.0) sprintf(coordinate, "%.2f\u00B0W", -longitude * DEG);
 	else sprintf(coordinate, "%.2f\u00B0E", longitude * DEG);
 
