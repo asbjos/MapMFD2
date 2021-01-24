@@ -47,6 +47,33 @@ bool MapMFD::Update(oapi::Sketchpad* skp)
 
 bool MapMFD::ConsumeButton(int bt, int event)
 {
+	// The centreLong/centreLat pan buttons are immediate, so process entire pressed event
+	if (!configScreen && !referenceListScreen && !targetListScreen) // in map screen
+	{
+		bool newPress = false;
+		if (event & PANEL_MOUSE_LBDOWN) newPress = true; // new click
+		else if (event & PANEL_MOUSE_LBPRESSED) newPress = false; // holding click
+		else return false; // no click (at least not of the ones we care about)
+
+		if (bt == 6 && trackPosition != LATLONGTRACK)
+		{
+			return ConsumeKeyImmediate(OAPI_KEY_MINUS, newPress);
+		}
+		if (bt == 7 && trackPosition != LATLONGTRACK)
+		{
+			return ConsumeKeyImmediate(OAPI_KEY_EQUALS, newPress);
+		}
+		if (bt == 8 && trackPosition == NOTRACK)
+		{
+			return ConsumeKeyImmediate(OAPI_KEY_LBRACKET, newPress);
+		}
+		if (bt == 9 && trackPosition == NOTRACK)
+		{
+			return ConsumeKeyImmediate(OAPI_KEY_RBRACKET, newPress);
+		}
+	}
+
+	// If nothing happens, or not a keydown event, then don't do anything
 	if (!(event & PANEL_MOUSE_LBDOWN)) return false;
 
 	if (configScreen)
@@ -159,7 +186,7 @@ bool MapMFD::ConsumeButton(int bt, int event)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_C);
 		}
-		if (bt == 6 && trackPosition != LATLONGTRACK)
+		/*if (bt == 6 && trackPosition != LATLONGTRACK)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_MINUS);
 		}
@@ -174,7 +201,7 @@ bool MapMFD::ConsumeButton(int bt, int event)
 		if (bt == 9 && trackPosition == NOTRACK)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_RBRACKET);
-		}
+		}*/
 		if (bt == 10)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_M);
@@ -193,6 +220,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 	bool TargetObject(void* id, char* str, void* data);
 	bool GridSeparation(void* id, char* str, void* data);
 	bool GridResolution(void* id, char* str, void* data);
+	bool NumberMaxOrbitPeriodFraction(void* id, char* str, void* data);
 	bool NumberOrbitsDisplayed(void* id, char* str, void* data);
 	bool SpecificAltitudeSelection(void* id, char* str, void* data);
 
@@ -206,11 +234,15 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			configSelection = CONFIGSELECT((int(configSelection) + LASTENTRYCONFIG - 1) % int(LASTENTRYCONFIG)); // + 9 instead of -1, which results in negative result
 			if (int(configSelection) < currentTopListed) currentTopListed = int(configSelection);
 			if (int(configSelection) > currentTopListed + entriesPerPage) currentTopListed = int(configSelection) - entriesPerPage;
+
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_EQUALS:
 			configSelection = CONFIGSELECT((int(configSelection) + 1) % int(LASTENTRYCONFIG));
 			if (int(configSelection) < currentTopListed) currentTopListed = int(configSelection);
 			if (int(configSelection) > currentTopListed + entriesPerPage) currentTopListed = int(configSelection) - entriesPerPage;
+
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_M:
 
@@ -218,46 +250,46 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			{
 			case CONFIGTRACKMODE:
 				orbitTrackGround = !orbitTrackGround;
-				return true;
+				break;
 			case CONFIGRADAR:
 				displayElevationRadar = !displayElevationRadar;
-				return true;
+				break;
 			case CONFIGSHOWVESSELS:
 				showVessels = !showVessels;
-				return true;
+				break;
 			case CONFIGDRAWSPECIFICALT:
 				oapiOpenInputBox("Altitude (0 = off):", SpecificAltitudeSelection, 0, 20, (void*)this);
-				return true;
+				break;
 			case CONFIGSHOWHISTORY:
 				showHistory = !showHistory;
 				if (!showHistory) shipHistoryLength = 0; // reset if turned off
-				return true;
+				break;
 			case CONFIGPROJECTION:
 				proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION));
-				return true;
+				break;
 			case CONFIGFLIPPOLE:
 				azimuthalEquidistantNortPole = !azimuthalEquidistantNortPole;
-				return true;
+				break;
 			case CONFIGRESETMAP:
 				centreLat = 0.0;
 				centreLong = 0.0;
 				centreZoom = 1;
 				trackPosition = NOTRACK;
-				return true;
+				break;
 			case CONFIGGRIDSEP:
 				oapiOpenInputBox("Grid separation (\u00B0):", GridSeparation, 0, 20, (void*)this);
-				return true;
+				break;
 			case CONFIGGRIDRES:
 				oapiOpenInputBox("Grid resolution (\u00B0):", GridResolution, 0, 20, (void*)this);
-				return true;
+				break;
 			case CONFIGMAPRES:
 				skipEveryNLines = (skipEveryNLines + 1) % (skipEveryNLinesMax + 1);
 				if (skipEveryNLines == skipEveryNLinesMax) autoResolution = true;
 				else autoResolution = false;
-				return true;
+				break;
 			case CONFIGMAPAUTOSIZE:
 				defaultMapLinesAmount = (defaultMapLinesAmount % 10000) + 1000; // allow up to 1e4 lines, and at least 1e3
-				return true;
+				break;
 			case CONFIGTRACKANGLEDELTA:
 				// Valid values are 0.01, 0.05, 0.1, 0.5, 1.0
 				if (orbitTrackAngleDelta == 0.1) orbitTrackAngleDelta = 0.5;
@@ -265,28 +297,32 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				else if (orbitTrackAngleDelta == 1.0) orbitTrackAngleDelta = 0.01;
 				else if (orbitTrackAngleDelta == 0.01) orbitTrackAngleDelta = 0.05;
 				else orbitTrackAngleDelta = 0.1;
-				return true;
+				break;
+			case CONFIGTRACKMAXPERIODFRAC:
+				oapiOpenInputBox("Max time step period fraction:", NumberMaxOrbitPeriodFraction, 0, 20, (void*)this);
+				break;
 			case CONFIGTRACKNUMORBITS:
 				oapiOpenInputBox("Number of orbits to show:", NumberOrbitsDisplayed, 0, 20, (void*)this);
-				return true;
+				break;
 			case CONFIGPLANETVIEWSEGMENTS:
 				if (viewCircleResolution == 60) viewCircleResolution = 90;
 				else if (viewCircleResolution == 90) viewCircleResolution = 120;
 				else if (viewCircleResolution == 120) viewCircleResolution = 180;
 				else if (viewCircleResolution == 180) viewCircleResolution = 360;
 				else viewCircleResolution = 60;
-				return true;
+				break;
 			case CONFIGRESETALL:
 				resetCommand = true;
-				return true;
+				break;
 			case CONFIGDEBUGINFO:
 				debugInformation = !debugInformation;
-				return true;
+				break;
 			default:
 				sprintf(oapiDebugString(), "ERROR! Invalid Configselect setting. Debug %.3f", oapiGetSimTime());
 				return false;
 			}
 
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_D:
 			// Set active value to default
@@ -294,64 +330,71 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			{
 			case CONFIGTRACKMODE:
 				orbitTrackGround = true;
-				return true;
+				break;
 			case CONFIGRADAR:
 				displayElevationRadar = false;
-				return true;
+				break;
 			case CONFIGSHOWVESSELS:
 				showVessels = false;
-				return true;
+				break;
 			case CONFIGDRAWSPECIFICALT:
 				drawSpecificAlt = 0.0;
-				return true;
+				break;
 			case CONFIGSHOWHISTORY:
 				showHistory = true;
-				return true;
+				break;
 			case CONFIGPROJECTION:
 				proj = EQUIRECTANGULAR;
-				return true;
+				break;
 			case CONFIGFLIPPOLE:
 				azimuthalEquidistantNortPole = true;
-				return true;
+				break;
 			case CONFIGRESETMAP:
 				centreLat = 0.0;
 				centreLong = 0.0;
 				centreZoom = 1;
 				trackPosition = NOTRACK;
-				return true;
+				break;
 			case CONFIGGRIDSEP:
 				gridAngleSeparation = 30;
-				return true;
+				break;
 			case CONFIGGRIDRES:
 				gridResolution = 2;
-				return true;
+				break;
 			case CONFIGMAPRES:
 				skipEveryNLines = skipEveryNLinesMax;
 				autoResolution = true;
-				return true;
+				break;
 			case CONFIGMAPAUTOSIZE:
 				defaultMapLinesAmount = 5000;
-				return true;
+				break;
 			case CONFIGTRACKANGLEDELTA:
 				orbitTrackAngleDelta = 0.1;
-				return true;
+				break;
+			case CONFIGTRACKMAXPERIODFRAC:
+				maxPeriodFraction = 100.0;
+				break;
 			case CONFIGTRACKNUMORBITS:
 				orbitTrackOrbitsNumber = 3.5;
-				return true;
+				break;
 			case CONFIGPLANETVIEWSEGMENTS:
 				viewCircleResolution = 60;
-				return true;
+				break;
 			case CONFIGRESETALL:
 				resetCommand = false;
-				return true;
+				break;
 			default:
 				sprintf(oapiDebugString(), "ERROR! Invalid configselect reset. Debug %.3f", oapiGetSimTime());
 				return false;
 			}
+
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
+			return true;
 		case OAPI_KEY_O:
 			// Back to main map display
 			configScreen = false;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		default:
 			return false;
@@ -370,11 +413,15 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			referenceSelection = (referenceSelection + numberReferenceChoices - 1) % numberReferenceChoices; // + 9 instead of -1, which results in negative result
 			if (referenceSelection < currentReferenceTopListed) currentReferenceTopListed = referenceSelection;
 			if (referenceSelection > currentReferenceTopListed + entriesPerPage) currentReferenceTopListed = referenceSelection - entriesPerPage;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_EQUALS:
 			referenceSelection = (referenceSelection + 1) % numberReferenceChoices;
 			if (referenceSelection < currentReferenceTopListed) currentReferenceTopListed = referenceSelection;
 			if (referenceSelection > currentReferenceTopListed + entriesPerPage) currentReferenceTopListed = referenceSelection - entriesPerPage;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_M:
 			if (referenceExpand == referenceSelection) // selected same object that was previously expanded
@@ -405,6 +452,8 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 					if (totalPlanets + sortedPlanetsCache[referenceExpand].moonCount <= entriesPerPage) currentReferenceTopListed = 0; // don't need to scroll if we can fit everything
 				}
 			}
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_O: // select and return
 			if (referenceExpand >= 0 && referenceSelection > referenceExpand) // we have selected an object in expanded or later
@@ -427,17 +476,20 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			else sprintf(oapiDebugString(), "ERROR! Debug! Something went wrong as the selected handle was invalid! %.2f", oapiGetSimTime());
 			referenceListScreen = false;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_D: // auto and return
 			SetNewReference(v->GetSurfaceRef());
 			referenceListScreen = false;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_T:
 			oapiOpenInputBox("Reference planet:", ReferencePlanet, 0, 20, (void*)this);
 
 			referenceListScreen = false;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		default:
 			return false;
@@ -485,11 +537,15 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			targetSelection = (targetSelection + numberTargetChoices - 1) % numberTargetChoices; // + 9 instead of -1, which results in negative result
 			if (targetSelection < currentTargetTopListed) currentTargetTopListed = targetSelection;
 			if (targetSelection > currentTargetTopListed + entriesPerPage) currentTargetTopListed = targetSelection - entriesPerPage;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_EQUALS:
 			targetSelection = (targetSelection + 1) % numberTargetChoices;
 			if (targetSelection < currentTargetTopListed) currentTargetTopListed = targetSelection;
 			if (targetSelection > currentTargetTopListed + entriesPerPage) currentTargetTopListed = targetSelection - entriesPerPage;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_M:
 			if (int(targetExpand) == targetSelection) // selected same object that was previously expanded
@@ -522,6 +578,8 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			}
 
 			currentTargetTopListed = 0; // don't need to scroll as we can fit everything
+
+			InvalidateDisplay();
 
 			return true;
 		case OAPI_KEY_S: // select (or deselct) as target
@@ -609,6 +667,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 		case OAPI_KEY_O: // select and return home
 			targetListScreen = false;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_T:
 			oapiOpenInputBox("Target object:", TargetObject, 0, 20, (void*)this);
@@ -616,6 +675,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			// Allow us to see map for potential coordinates
 			targetListScreen = false;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_N:
 			// Select nearest object in expanded list
@@ -628,7 +688,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			switch (targetExpand)
 			{
 			case EXPANDSPACEPORTS:
-				for (int i = 0; i < oapiGetBaseCount(ref); i++)
+				for (int i = 0; i < int(oapiGetBaseCount(ref)); i++)
 				{
 					OBJHANDLE surfBase = oapiGetBaseByIndex(ref, i);
 					VECTOR3 pos;
@@ -642,6 +702,8 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 
 				if (oapiGetObjectType(closestObject) == OBJTP_SURFBASE) AddOrRemoveTarget(closestObject); // add or remove nearest object
 
+
+				InvalidateDisplay();
 				return true;
 			case EXPANDSPACECRAFT:
 				for (int i = 0; i < (int)oapiGetVesselCount(); i++)
@@ -663,6 +725,8 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 
 				if (oapiGetObjectType(closestObject) == OBJTP_VESSEL) AddOrRemoveTarget(closestObject);
 
+
+				InvalidateDisplay();
 				return true;
 			case EXPANDMOONS:
 				for (int i = 0; i < totalPlanets; i++)
@@ -687,6 +751,8 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 					}
 				}
 
+
+				InvalidateDisplay();
 				return true;
 			case EXPANDNONE:
 			default:
@@ -698,7 +764,7 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			return false;
 		}
 	}
-	else
+	else // default map screen
 	{
 		switch (key)
 		{
@@ -706,28 +772,36 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			// New "fancy" reference select screen
 			referenceListScreen = true;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			//oapiOpenInputBox("Reference planet:", ReferencePlanet, 0, 20, (void*)this);
 			return true;
 		case OAPI_KEY_T:
 			// New "fancy" target select screen
 			targetListScreen = true;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			//oapiOpenInputBox("Target object:", TargetObject, 0, 20, (void*)this);
 			return true;
 		case OAPI_KEY_X:
 			centreZoom /= 2;
 			if (centreZoom < 1) centreZoom = 1;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_Z:
 			centreZoom *= 2;
 			if (centreZoom > MAX_ZOOM) centreZoom = MAX_ZOOM;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_K:
 			trackPosition = TRACKMODE((int(trackPosition) + 1) % int(LASTENTRYTRACK));
 			if (trackPosition == LONGTRACK) centreLat = 0.0; // set to zero, so that it's centered. But it is allowed to change this later.
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
-		case OAPI_KEY_MINUS:
+		// Pan buttons are moved to ConsumeKeyImmediate
+		/*case OAPI_KEY_MINUS:
 			centreLat += 15.0 * RAD / double(centreZoom);
 			if (centreLat > PI05) centreLat = PI05;
 			return true;
@@ -740,10 +814,12 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			return true;
 		case OAPI_KEY_RBRACKET:
 			centreLong = normangle(centreLong + 15.0 * RAD / double(centreZoom));
-			return true;
+			return true;*/
 		case OAPI_KEY_M:
 			numTargets -= 1;
 			if (numTargets < 0) numTargets = 0;
+
+			InvalidateDisplay();
 			return true;
 		case OAPI_KEY_P:
 			proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION));
@@ -776,20 +852,25 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 					checkedProjections++;
 				}
 			}
+
+			InvalidateDisplay();
 			
 			return true;
 		case OAPI_KEY_1:
 			referenceListScreen = true;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_2:
 			targetListScreen = true;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_C:
 			// Config display
 			configScreen = true;
 			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
 		case OAPI_KEY_3:
 			// Clear history track
@@ -807,10 +888,57 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 	return false;
 }
 
-bool MapMFD::ConsumeKeyImmediate(char* kstate)
+bool MapMFD::ConsumeKeyImmediate(DWORD key, bool newPress)
 {
-	//if ()
-	return false;
+	double syst = oapiGetSysTime();
+	double sysdt = oapiGetSysStep();
+
+	if (newPress) immediateKeyStart = syst;
+
+	double angDelta = 1.0 * RAD + (syst - immediateKeyStart) * (syst - immediateKeyStart) * 7.5 * RAD; // speed up motion over time with a quadratic law.
+	angDelta = min(angDelta, 360.0 * RAD); // don't allow faster than 360 deg/s. Currently takes sqrt((360 - 1) / 7.5) = 6.9 seconds to hit limit.
+	// And then finally adjust for zoom:
+	angDelta /= double(centreZoom);
+
+	/*case OAPI_KEY_MINUS:
+		centreLat += 15.0 * RAD / double(centreZoom);
+		if (centreLat > PI05) centreLat = PI05;
+		return true;
+	case OAPI_KEY_EQUALS:
+		centreLat -= 15.0 * RAD / double(centreZoom);
+		if (centreLat < -PI05) centreLat = -PI05;
+		return true;
+	case OAPI_KEY_LBRACKET:
+		centreLong = normangle(centreLong - 15.0 * RAD / double(centreZoom));
+		return true;
+	case OAPI_KEY_RBRACKET:
+		centreLong = normangle(centreLong + 15.0 * RAD / double(centreZoom));
+		return true;*/
+
+	switch (key)
+	{
+	case OAPI_KEY_MINUS:
+		centreLat += angDelta * sysdt;
+		if (centreLat > PI05) centreLat = PI05;
+		break;
+	case OAPI_KEY_EQUALS:
+		centreLat -= angDelta * sysdt;
+		if (centreLat < -PI05) centreLat = -PI05;
+		break;
+	case OAPI_KEY_LBRACKET:
+		centreLong = normangle(centreLong - angDelta * sysdt);
+		break;
+	case OAPI_KEY_RBRACKET:
+		centreLong = normangle(centreLong + angDelta * sysdt);
+		break;
+	default:
+		sprintf(oapiDebugString(), "WARNING! ConsumeKeyImmediate got wrong button! %.2f", oapiGetSimTime());
+		return false;
+	}
+
+	InvalidateDisplay(); // give impression of fluid display. Default Map MFD does this.
+
+	return false; // Don't return anything, unless we want to inhibit Orbiter key handling. Which we don't need.
 }
 
 bool ReferencePlanet(void* id, char* str, void* data)
@@ -831,6 +959,11 @@ bool GridSeparation(void* id, char* str, void* data)
 bool GridResolution(void* id, char* str, void* data)
 {
 	return ((MapMFD*)data)->SetGridResolution(str);
+}
+
+bool NumberMaxOrbitPeriodFraction(void* id, char* str, void* data)
+{
+	return ((MapMFD*)data)->SetMaxPeriodFraction(str);
 }
 
 bool NumberOrbitsDisplayed(void* id, char* str, void* data)
@@ -877,7 +1010,7 @@ bool MapMFD::SetTargetObject(char* rstr)
 			char* strPos;
 			strPos = strchr(rstr, ' ');
 
-			if (strPos != NULL) // found two values, i.e. a coordinate in 'long lat' format, both in degrees.
+			if (strPos != NULL && numTargets < 10) // found two values, i.e. a coordinate in 'long lat' format, both in degrees. And we have room for new target.
 			{
 				char longText[20];
 				char latText[20];
@@ -894,25 +1027,11 @@ bool MapMFD::SetTargetObject(char* rstr)
 			// Still nothing recognized. Set false.
 			return false;
 		}
-		else if (numTargets < 10)
-		{
-			targets[numTargets] = userTarget;
-			numTargets += 1;
-			return true;
-		}
+		else return AddOrRemoveTarget(userTarget); // this will return false if full target list (>10), else true, and will either set new target or deselect old.
 
 		return false;
 	}
-	else if (numTargets < 10)
-	{
-		targets[numTargets] = userTarget;
-		numTargets += 1;
-
-		//HUDPARAM surfHud;
-		//surfHud.HUDorbit = { userTarget };
-		//oapiSetHUDMode(HUD_SURFACE, &surfHud);
-		return true;
-	}
+	else return AddOrRemoveTarget(userTarget); // this will return false if full target list (>10), else true, and will either set new target or deselect old.
 
 	return false;
 }
@@ -956,6 +1075,19 @@ bool MapMFD::SetGridResolution(char* rstr)
 		gridResolution = inputValue;
 		return true;
 	}
+	return false;
+}
+
+bool MapMFD::SetMaxPeriodFraction(char* rstr)
+{
+	double inputValue = atof(rstr);
+
+	if (inputValue > 0.0)
+	{
+		maxPeriodFraction = inputValue;
+		return true;
+	}
+
 	return false;
 }
 
@@ -1020,6 +1152,7 @@ void MapMFD::StoreStatus() const
 	MapMFDState.trackPosition = trackPosition;
 	MapMFDState.orbitTrackGround = orbitTrackGround;
 	MapMFDState.orbitTrackAngleDelta = orbitTrackAngleDelta;
+	MapMFDState.maxPeriodFraction = maxPeriodFraction;
 	MapMFDState.orbitTrackOrbitsNumber = orbitTrackOrbitsNumber;
 	MapMFDState.displayElevationRadar = displayElevationRadar;
 	MapMFDState.drawSpecificAlt = drawSpecificAlt;
@@ -1065,6 +1198,7 @@ void MapMFD::RecallStatus()
 		trackPosition = MapMFDState.trackPosition;
 
 		orbitTrackAngleDelta = MapMFDState.orbitTrackAngleDelta;
+		maxPeriodFraction = MapMFDState.maxPeriodFraction;
 		orbitTrackGround = MapMFDState.orbitTrackGround;
 		orbitTrackOrbitsNumber = MapMFDState.orbitTrackOrbitsNumber;
 		displayElevationRadar = MapMFDState.displayElevationRadar;
@@ -1282,7 +1416,8 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	if (centreZoom > 1) sprintf(cbuf, "%s  ZM %i", cbuf, centreZoom);
 	skp->Text(textDX * 60, 0, cbuf, strlen(cbuf));
 
-	sprintf(cbuf, GetProjectionName());
+	//sprintf(cbuf, GetProjectionName());
+	sprintf(cbuf, GetSpecificProjectionName(proj));
 	skp->Text(textDX, textDY * 1, cbuf, strlen(cbuf));
 }
 
@@ -1338,7 +1473,8 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 
 	sprintf(cbuf, "Projection");
 	skp->Text(textX0, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, GetProjectionName());
+	//sprintf(cbuf, GetProjectionName());
+	sprintf(cbuf, GetSpecificProjectionName(proj));
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
 
 	sprintf(cbuf, "Azimuth. Equidist. pole");
@@ -1380,6 +1516,13 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	skp->Text(textX0, textY0 + int(CONFIGTRACKANGLEDELTA) * dY, cbuf, strlen(cbuf));
 	sprintf(cbuf, "%.3f\u00B0", orbitTrackAngleDelta);
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKANGLEDELTA) * dY, cbuf, strlen(cbuf));
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
+	sprintf(cbuf, "Orbit track max period fraction");
+	skp->Text(textX0, textY0 + int(CONFIGTRACKMAXPERIODFRAC) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "%.1f", maxPeriodFraction);
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKMAXPERIODFRAC) * dY, cbuf, strlen(cbuf));
 	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
 
 	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
@@ -1591,11 +1734,16 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 	case EQUIRECTANGULAR:
 	case MILLER:
 	case MERCATOR:
+	case VANDERGRINTEN:
 	case EQUALEARTH:
 	case MOLLWEIDE:
+	case AITOFF:
+	case HAMMER:
 	case ORTELIUSOVAL:
 	case WINKELTRIPEL:
 	case RECTANGULARPOLYCONIC:
+	case GALLPETERS:
+	case HOBODYER:
 		fillElements = 0; // switch-case doesn't allow for declaring with value, so first declare, then assign
 		double leftmostLongitude, leftmostTerminatorLatitude; // longitude of left edge of map
 		leftmostLongitude = normangle(centreLong - PI); // switch-case doesn't allow for declaring with value, so first declare, then assign
@@ -1702,32 +1850,34 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 
 		skp->SetBrush(sunlitSide);
 		skp->SetPen(NULL); // add terminator line later
-		if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+		if (completelySunFilled) // there are no vertices on screen
 		{
-			// Omit the flickering problem, and just fill with light
-			oapi::IVECTOR2 sunSquare[4];
-			sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
-			sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
-			sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
-			sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
-			skp->Polygon(sunSquare, 4);
-
-			if (debugInformation) // display info
+			char debugLabel[4];
+			if (oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // within sunView, i.e. entire displayed map is lighted up.
 			{
-				char debugLabel[4];
-				sprintf(debugLabel, "Simple fill square");
-				skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+				// Omit the flickering problem, and just fill with light
+				oapi::IVECTOR2 sunSquare[4];
+				sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
+				sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
+				sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
+				sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
+				skp->Polygon(sunSquare, 4);
+
+				sprintf(debugLabel, "Simple fill square light");
 			}
+			else sprintf(debugLabel, "Simple fill square dark"); // All dark, don't plot at all
+			
+			if (debugInformation) skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel)); // display info
 		}
 		else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
 
 		break;
 	case AZIMUTHALEQUIDISTANT:
 	case LAMBERTAZIMUTHAL:
-		// These are azimuthal projections, where the entire Sun-lit are may be undivided. This occurs if sunLat/sunLong is less than sunAngleView from centreLat/centreLong
-		// There are two cases \
-			- Entire Sun-lit in one piece (sunPos - centrePos < 90 deg) \
-			- Band of Sun all around, with dark patch in middle (else)
+		/* These are azimuthal projections, where the entire Sun-lit area may be undivided. This occurs if sunLat/sunLong is less than sunAngleView from centreLat/centreLong
+		There are two cases 
+			- Entire Sun-lit in one piece (sunPos - centrePos < 90 deg)
+			- Band of Sun all around, with dark patch in middle (else) */
 
 		if (oapiOrthodome(sunLong, sunLat, centreLong, centreLat) < sunAngleView) // entire Sun in one piece.
 		{
@@ -1758,22 +1908,24 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 
 			skp->SetBrush(sunlitSide);
 			skp->SetPen(NULL); // add terminator line later
-			if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+			if (completelySunFilled) // there are no vertices on screen.
 			{
-				// Omit the flickering problem, and just fill with light
-				oapi::IVECTOR2 sunSquare[4];
-				sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
-				sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
-				sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
-				sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
-				skp->Polygon(sunSquare, 4);
-
-				if (debugInformation) // display info
+				char debugLabel[4];
+				if (oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // within sunView, i.e. entire displayed map is lighted up.
 				{
-					char debugLabel[4];
-					sprintf(debugLabel, "Simple fill square");
-					skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+					// Omit the flickering problem, and just fill with light
+					oapi::IVECTOR2 sunSquare[4];
+					sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
+					sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
+					sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
+					sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
+					skp->Polygon(sunSquare, 4);
+
+					sprintf(debugLabel, "Simple fill square light");
 				}
+				else sprintf(debugLabel, "Simple fill square dark"); // All dark, don't plot at all
+
+				if (debugInformation) skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel)); // display info
 			}
 			else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
 		}
@@ -1930,22 +2082,24 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 
 		skp->SetBrush(sunlitSide);
 		skp->SetPen(NULL); // add terminator line later
-		if (completelySunFilled && oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // there are no vertices on screen, and we're within sunView, i.e. entire displayed map is lighted up.
+		if (completelySunFilled) // there are no vertices on screen.
 		{
-			// Omit the flickering problem, and just fill with light
-			oapi::IVECTOR2 sunSquare[4];
-			sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
-			sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
-			sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
-			sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
-			skp->Polygon(sunSquare, 4);
-
-			if (debugInformation) // display info
+			char debugLabel[4];
+			if (oapiOrthodome(centreLong, centreLat, sunLong, sunLat) < sunAngleView) // within sunView, i.e. entire displayed map is lighted up.
 			{
-				char debugLabel[4];
-				sprintf(debugLabel, "Simple fill square");
-				skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel));
+				// Omit the flickering problem, and just fill with light
+				oapi::IVECTOR2 sunSquare[4];
+				sunSquare[0].x = 0 + 1; sunSquare[0].y = 0 + 1;
+				sunSquare[1].x = W - 1; sunSquare[1].y = 0 + 1;
+				sunSquare[2].x = W - 1; sunSquare[2].y = H - 1;
+				sunSquare[3].x = 0 + 1; sunSquare[3].y = H - 1;
+				skp->Polygon(sunSquare, 4);
+
+				sprintf(debugLabel, "Simple fill square light");
 			}
+			else sprintf(debugLabel, "Simple fill square dark"); // All dark, don't plot at all
+
+			if (debugInformation) skp->Text(W / 2, H / 2 + 20, debugLabel, strlen(debugLabel)); // display info
 		}
 		else skp->Polygon(sunFill, fillElements); // normal plotting, as we have a complex polygon view
 
@@ -1994,6 +2148,8 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 
 void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 {
+	skp->SetPen(gridLines);
+
 	// Draw encircling shape / border for the map graphic, but only for non-rectangular maps with poles on the sides (so called pseudocylindrical projections).
 	switch (proj)
 	{
@@ -2002,14 +2158,17 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 	case MERCATOR:
 	case TRANSVERSEMERCATOR:
 	case CASSINI:
+	case GALLPETERS:
+	case HOBODYER:
 		break;
+	case VANDERGRINTEN:
 	case EQUALEARTH:
 	case MOLLWEIDE:
+	case AITOFF:
+	case HAMMER:
 	case ORTELIUSOVAL:
 	case WINKELTRIPEL:
 	case RECTANGULARPOLYCONIC:
-		skp->SetPen(gridLines);
-
 		double decrementValue;
 		decrementValue = 0.999;
 		for (int i = -180; i < 180; i += gridResolution)
@@ -2031,7 +2190,6 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 	case LAMBERTAZIMUTHAL:
 		// These projections are so-called azimuthal, so the boundary is the great-circle 180 deg distance from the centre point.
 		// The encircling shape is thus a 180 deg angular distance for all bearings from centreLong/centreLat, much like the "viewable content"-circle and terminator line.
-		skp->SetPen(gridLines);
 		//double decrementValue;
 		decrementValue = 0.999;
 		double firstLong, firstLat, previousLong, previousLat;
@@ -2064,14 +2222,14 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 	}
 
 	// Draw grid lines for map
-	skp->SetPen(gridLines);
 	// Longitude lines (vertical)
-	for (int lo = -180; lo < 180; lo += gridAngleSeparation)
+	for (int lo = -180; lo < 180; lo += gridAngleSeparation) // for every longitude
 	{
-		for (int k = 0; k < 180 / gridResolution; k++)
+		for (int k = 0; k < 180 / gridResolution; k++) // draw latitude meridian
 		{
 			int la = -90 + k * gridResolution;
-			DrawLine(lo * RAD, la * RAD, lo * RAD, la * RAD + gridResolution * RAD, skp, false);
+			if (!((proj == CASSINI || proj == TRANSVERSEMERCATOR) && abs(normangle(lo * RAD - centreLong)) > PI05 && (la == -gridResolution))) // line crossing equator more than 90 deg from centreLong in Cassini and Transverse Mercator moves over entire display, so don't display that.
+				DrawLine(lo * RAD, la * RAD, lo * RAD, la * RAD + gridResolution * RAD, skp, false);
 		}
 	}
 	// Latitude lines (horizontal)
@@ -2080,7 +2238,9 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 		for (int k = 0; k < 360 / gridResolution; k++)
 		{
 			int lo = -180 + k * gridResolution;
-			DrawLine(lo * RAD, la * RAD, lo * RAD + gridResolution * RAD, la * RAD, skp, false);
+			//if (!(lo * RAD < normangle(centreLong + PI) && lo * RAD + gridResolution * RAD > normangle(centreLong + PI)) || proj == AZIMUTHALEQUIDISTANT || proj == LAMBERTAZIMUTHAL || proj == CASSINI || proj == TRANSVERSEMERCATOR) // line always propagates right, so if line crosses screen, then don't plot
+			if (!(normangle(lo * RAD - centreLong) > 0.0 && normangle(lo * RAD + gridResolution * RAD - centreLong) < 0.0) || proj == AZIMUTHALEQUIDISTANT || proj == LAMBERTAZIMUTHAL || proj == CASSINI || proj == TRANSVERSEMERCATOR) // line always propagates right, so if line crosses screen, then don't plot
+				DrawLine(lo * RAD, la * RAD, lo * RAD + gridResolution * RAD, la * RAD, skp, false);
 		}
 	}
 }
@@ -2632,7 +2792,7 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 			shipHistoryLength = 1; // i.e. ++;
 		}
 
-		double historyTimeDelta = 10.0;
+		const double historyTimeDelta = 10.0;
 		if (simt > shipHistory[shipHistoryIndex][2] + historyTimeDelta && !(v->GroundContact()))
 		{
 			shipHistoryIndex = (shipHistoryIndex + 1) % GROUND_TRACK_HISTORY_SIZE;
@@ -2647,8 +2807,6 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 		skp->SetPen(mainOrbitTrackHistory);
 		for (int i = 0; i < shipHistoryLength; i++) // don't draw around in circle, therefore subtract one (e.g. 4 segments from 5 points)
 		{
-			//linesDrawnHistory++;
-
 			if (i == 0) // Draw from currPos to last save
 			{
 				DrawLine(shipHistory[shipHistoryIndex][0], shipHistory[shipHistoryIndex][1], currentLong, currentLat, skp);
@@ -2804,15 +2962,12 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 				if (colourElev < 0) colourElev = 0;
 				else if (colourElev > 255) colourElev = 255;
 
-				DWORD elevColour = oapiGetColour(0, 255 - colourElev, colourElev); // use red for positive elevation (crash into mountain), green for negative elevation (good clearance)
-
-				oapi::Pen* elevPen = oapiCreatePen(1, 5, elevColour);
-				skp->SetPen(elevPen);
+				//DWORD elevColour = oapiGetColour(0, 255 - colourElev, colourElev); // use red for positive elevation (crash into mountain), green for negative elevation (good clearance)
+				skp->SetPen(gradientRedGreen[colourElev]);
 				//char debugElev[10];
 				//sprintf(debugElev, "%i", colourElev);
 				DrawFeature(longPoint, latPoint, 10, CROSS, skp, ""); // text doesn't scale nicely, so don't display any
 
-				oapiReleasePen(elevPen);
 			}
 		}
 	}
@@ -3026,8 +3181,13 @@ bool MapMFD::DrawLine(double long0, double lat0, double long1, double lat1, oapi
 	int pxLong1 = int(W / 2 + transformedLongitude1 / PI * W / 2);
 	int pxLat1 = int(H / 2 - transformedLatitude1 / PI05 * W / 4);
 
+	// Don't write over the MFD border, so if a line is one end inside and other outside, then truncate the outside to where it goes out of the MFD borders.
+	bool point0inside = true, point1inside = true;
+	if ((pxLong0 < 0 || pxLong0 > W) || (pxLat0 < 0 || pxLat0 > H)) point0inside = false; // point 0 outside
+	if ((pxLong1 < 0 || pxLong1 > W) || (pxLat1 < 0 || pxLat1 > H)) point1inside = false; // point 1 outside
+
 	// Finally, before plotting, ensure that the line is visible. We do this by finding the distance from the centre of the screen to the parametric line.
-	// If the distance is more than the diagonal distance to the edge (hypothenuse), it must be completely outside, and not worth plotting.
+	// If the distance is more than the diagonal distance to the edge (hypotenuse), it must be completely outside, and not worth plotting.
 	//double shortestDistanceLineToCentre = W * H / PI2 * abs(transformedLongitude0 * transformedLatitude1 - transformedLongitude1 * transformedLatitude0) / sqrt(H * H * pow(transformedLatitude0 - transformedLatitude1, 2.0) + W * W * pow(transformedLongitude1 - transformedLongitude0, 2.0));
 	//bool lineOutsideScreen = shortestDistanceLineToCentre > sqrt(W * W / 4 + H * H / 4); // further distance than screen diagonal
 	//
@@ -3044,20 +3204,13 @@ bool MapMFD::DrawLine(double long0, double lat0, double long1, double lat1, oapi
 	//	double vertexToCentreDistance1 = sqrt(pow(pxLong1 - W / 2, 2) + pow(pxLat1 - H / 2, 2));*/
 	//	
 
-	bool bothPointsOutside = false;
-	if (((pxLong0 < 0 || pxLong0 > W) || (pxLat0 < 0 || pxLat0 > H)) && // point 0 outside
-		((pxLong1 < 0 || pxLong1 > W) || (pxLat1 < 0 || pxLat1 > H))) // point 1 outside
-	{
-		bothPointsOutside = true;
-	}
-
-	if (bothPointsOutside) // don't add safetycheck, as no line out of bounds is useful. I'm desciding that.
+	if (!point0inside && !point1inside) // don't add safetycheck, as no line out of bounds is useful. I'm desciding that.
 	{
 		// Don't plot, as the two anchor points are outside of the screen.
 		pointsOutside += 1;
 		return false;
 	}
-	else if (safetyCheck && (pow(transformedLongitude0 - transformedLongitude1, 2) + pow(transformedLatitude0 - transformedLatitude1, 2)) > 90.0 * RAD * double(centreZoom)) // multiply by centreZoom, so that we don't delete zoomed objects
+	else if (safetyCheck && ((transformedLongitude0 - transformedLongitude1) * (transformedLongitude0 - transformedLongitude1) + (transformedLatitude0 - transformedLatitude1) * (transformedLatitude0 - transformedLatitude1)) > 90.0 * RAD * double(centreZoom)) // multiply by centreZoom, so that we don't delete zoomed objects
 	{
 		// Don't plot, as the line is too long to look good, unless so specified by disabling safetyCheck
 		return false;
@@ -3117,6 +3270,9 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 		double stepTrA = prm.TrA;
 		double time = 0.0;
 		const double angleDelta = orbitTrackAngleDelta * RAD;
+		const double maxTimeStep = oapiGetPlanetPeriod(ref) / maxPeriodFraction;
+
+		int debugCountOversteps = 0;
 
 		bool aboveSurface = true;
 		int n = 0;
@@ -3135,15 +3291,41 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 
 			stepTrA += angleDelta;
 			double futureMnA = TrA2MnA(stepTrA, el.e);
-			if (el.e > 1.0)
+			if (el.e > 1.0) // hyperbolic
 			{
 				double meanMotion = sqrt(refMu / pow(-el.a, 3));
-				time = (futureMnA - prm.MnA) / meanMotion;
+				double desiredTime = (futureMnA - prm.MnA) / meanMotion;
+
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					time += maxTimeStep;
+
+					// And now set back stepTrA to what we have in time
+					futureMnA = time * meanMotion + prm.MnA;
+					stepTrA = MnA2TrA(futureMnA, el.e);
+
+					debugCountOversteps++;
+				}
+				else time = desiredTime;
 			}
-			else
+			else // elliptic
 			{
 				double meanMotion = PI2 / prm.T;
-				time = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
+				double desiredTime = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
+				
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					time += maxTimeStep;
+
+					// And now set back stepTrA to what we have in time
+					futureMnA = time * meanMotion + prm.MnA;
+					double newSetTrA = posangle(MnA2TrA(futureMnA, el.e));
+					while (newSetTrA < stepTrA - PI05) newSetTrA += PI2;
+					stepTrA = newSetTrA;
+
+					debugCountOversteps++;
+				}
+				else time = desiredTime;
 			}
 
 			n++;
@@ -3152,6 +3334,13 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 		if (!aboveSurface)
 		{
 			DrawFeature(previousLong, previousLat, 3, BOX, skp, "");
+		}
+
+		if (debugInformation)
+		{
+			char debugLabel[100];
+			sprintf(debugLabel, "Oversteps: %i, time: %.1f", debugCountOversteps, time);
+			skp->Text(W / 2, H / 2 + 50, debugLabel, strlen(debugLabel)); // display info
 		}
 	}
 	else // orbit track plane mode
@@ -3230,6 +3419,43 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		if (abs(latitude) == PI05) latitude *= 0.9999; // avoid log(+-inf)
 		transLat = log(tan(PI / 4.0 + latitude / 2.0)) - log(tan(PI / 4.0 + centreLat / 2.0));
 		break;
+	case VANDERGRINTEN:
+		// https://en.wikipedia.org/wiki/Van_der_Grinten_projection
+		A1 = 0.5 * abs(PI / longitude - longitude / PI); // A
+		theta = asin(abs(2.0 * latitude / PI)); // theta
+		A2 = cos(theta) / (sin(theta) + cos(theta) - 1.0); // G
+		A3 = A2 * (2.0 / sin(theta) - 1.0); // P
+		A4 = A1 * A1 + A2; // Q
+
+		transLong = PI * (A1 * (A2 - A3 * A3) + sqrt(A1 * A1 * (A2 - A3 * A3) * (A2 - A3 * A3) - (A3 * A3 + A1 * A1) * (A2 * A2 - A3 * A3))) / (A3 * A3 + A1 * A1);
+		transLat = PI * (A3 * A4 - A1 * sqrt((A1 * A1 + 1.0) * (A3 * A3 + A1 * A1) - A4 * A4)) / (A3 * A3 + A1 * A1);
+		if (longitude < 0.0) transLong *= -1.0;
+		if (latitude < 0.0) transLat *= -1.0;
+
+		if (latitude == 0.0)
+		{
+			transLong = longitude;
+			transLat = 0.0;
+		}
+
+		if (abs(longitude) < 1e-4 || abs(latitude) == PI05) // actually a longitude == 0.0 condition, but due to compuational math, we have a somewhat loose definition of "0".
+		{
+			transLong = 0.0;
+			transLat = PI * tan(theta / 2.0);
+
+			if (latitude < 0.0) transLat *= -1.0;
+		}
+
+
+		// Subtract centreLat
+		theta = asin(abs(2.0 * centreLat / PI)); // theta
+	
+		// For centreLat subtraction, we now have that the central longitude is 0, so this condition will always be true. Implement beneath.
+		k0 = PI * tan(theta / 2.0);
+		if (centreLat < 0.0) k0 *= -1.0;
+
+		transLat -= k0;
+		break;
 	case TRANSVERSEMERCATOR:
 		// https://en.wikipedia.org/wiki/Transverse_Mercator_projection
 		theta = sin(longitude) * cos(latitude);
@@ -3300,6 +3526,27 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLat -= sqrt(2.0) * sin(theta);
 
 		break;
+	case AITOFF:
+		// https://en.wikipedia.org/wiki/Aitoff_projection
+		k0 = acos(cos(latitude) * cos(longitude / 2.0)); // alpha on wiki
+		theta = sin(k0) / k0; // sinc(alpha)
+		if (k0 == 0.0) theta = 1.0;
+		transLong = 2.0 * cos(latitude) * sin(longitude / 2.0) / theta;
+		transLat = sin(latitude) / theta;
+
+		// Subtract centreLat
+		k0 = acos(cos(centreLat));
+		theta = sin(k0) / k0;
+		if (k0 == 0.0) theta = 1.0;
+		transLat -= sin(centreLat) / theta;
+		break;
+	case HAMMER:
+		// https://en.wikipedia.org/wiki/Hammer_projection
+		transLong = 2.0 * sqrt(2.0) * cos(latitude) * sin(longitude / 2.0) / sqrt(1.0 + cos(latitude) * cos(longitude / 2.0));
+		transLat = sqrt(2.0) * sin(latitude) / sqrt(1.0 + cos(latitude) * cos(longitude / 2.0));
+		transLat -= sqrt(2.0) * sin(centreLat) / sqrt(1.0 + cos(centreLat)); // subtract centreLat
+		//transLat -= centreLat;
+		break;
 	case ORTELIUSOVAL:
 		// https://en.wikipedia.org/wiki/Ortelius_oval_projection
 		if (longitude == 0.0)
@@ -3346,6 +3593,18 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 
 		transLong = sin(theta) / tan(latitude);
 		transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
+
+		// I have actually messed up the implementation in the above code (changing the latitude with correct scale to follow centreLat). But I like the look, so I've kept it.
+		// For an implementation consistent with other implemented projections (like Mollweide), then try the version below.
+		//if (latitude == 0.0) latitude = 1e-5; // avoid division by 0
+
+		//k0 = 0.5 * longitude;
+		////else k0 = tan(0.5 * longitude * sin(0.0)) / sin(0.0);
+
+		//theta = 2.0 * atan(k0 * sin(latitude));
+
+		//transLong = sin(theta) / tan(latitude);
+		//transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
 		break;
 	case AZIMUTHALEQUIDISTANT:
 		// https://en.wikipedia.org/wiki/Azimuthal_equidistant_projection
@@ -3404,6 +3663,17 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLong = asin(cos(latitude) * sin(longitude));
 		transLat = atan2(sin(latitude), cos(latitude) * cos(longitude)) - centreLat;
 		break;
+	case GALLPETERS:
+		transLong = longitude;
+		transLat = 2.0 * sin(latitude);
+		transLat -= 2.0 * sin(centreLat);
+		break;
+	case HOBODYER:
+		theta = 37.5 * RAD; // standard latitude of a cylindrical equal-area projection
+		transLong = longitude;
+		transLat = sin(latitude) / cos(theta) / cos(theta);
+		transLat -= sin(centreLat) / cos(theta) / cos(theta);
+		break;
 	default:
 		sprintf(oapiDebugString(), "ERROR, default in TransformPoint! %.2f", oapiGetSimTime());
 		return false;
@@ -3435,7 +3705,8 @@ bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double c
 
 	// TrA in x seconds
 	if (el.e > 1.0) M = M0 + sqrt(refMu / pow(-el.a, 3)) * t; // http://control.asu.edu/Classes/MAE462/462Lecture05.pdf page 37.
-	else M = fmod(M0 + PI2 * t / prm.T, PI2);
+	else M = posangle(M0 + PI2 * t / prm.T);
+	//else M = fmod(M0 + PI2 * t / prm.T, PI2);
 	double TrA = MnA2TrA(M, el.e);
 	double TrA0 = prm.TrA;
 
@@ -3532,40 +3803,48 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 	prm->MnA = MnA;
 }
 
-char* MapMFD::GetProjectionName(void)
-{
-	// Write projection
-	switch (proj)
-	{
-	case EQUIRECTANGULAR:
-		return "Equirectangular";
-	case MILLER:
-		return "Miller";
-	case MERCATOR:
-		return "Mercator";
-	case TRANSVERSEMERCATOR:
-		return "Transverse Mercator";
-	case EQUALEARTH:
-		return "Equal Earth";
-	case MOLLWEIDE:
-		return "Mollweide";
-	case ORTELIUSOVAL:
-		return "Ortelius Oval";
-	case WINKELTRIPEL:
-		return "Winkel Tripel";
-	case RECTANGULARPOLYCONIC:
-		return "Rectangular Polyconic";
-	case AZIMUTHALEQUIDISTANT:
-		return "Azimuthal Equidistant";
-	case LAMBERTAZIMUTHAL:
-		return "Lambert Azimuthal Equal-area";
-	case CASSINI:
-		return "Cassini";
-	default:
-		return "ERROR";
-	}
-	return "ERROR";
-}
+//char* MapMFD::GetProjectionName(void)
+//{
+//	// Write projection
+//	switch (proj)
+//	{
+//	case EQUIRECTANGULAR:
+//		return "Equirectangular";
+//	case MILLER:
+//		return "Miller";
+//	case MERCATOR:
+//		return "Mercator";
+//	case VANDERGRINTEN:
+//		return "Van der Grinten";
+//	case TRANSVERSEMERCATOR:
+//		return "Transverse Mercator";
+//	case EQUALEARTH:
+//		return "Equal Earth";
+//	case MOLLWEIDE:
+//		return "Mollweide";
+//	case HAMMER:
+//		return "Hammer";
+//	case ORTELIUSOVAL:
+//		return "Ortelius Oval";
+//	case WINKELTRIPEL:
+//		return "Winkel Tripel";
+//	case RECTANGULARPOLYCONIC:
+//		return "Rectangular Polyconic";
+//	case AZIMUTHALEQUIDISTANT:
+//		return "Azimuthal Equidistant";
+//	case LAMBERTAZIMUTHAL:
+//		return "Lambert Azimuthal Equal-area";
+//	case CASSINI:
+//		return "Cassini";
+//	case GALLPETERS:
+//		return "Gall-Peters";
+//	case HOBODYER:
+//		return "Hobo-Dyer";
+//	default:
+//		return "ERROR";
+//	}
+//	return "ERROR";
+//}
 
 char* MapMFD::GetCoordinateString(double longitude, double latitude)
 {

@@ -1,5 +1,5 @@
 #pragma once
-#include <algorithm>
+//#include <algorithm>
 
 /* 
 Header file for MapMFD2 addon for Orbiter Space Flight Simulator 2016.
@@ -8,10 +8,10 @@ Addon by Asbjørn 'asbjos' Krüger, 2020.
 This source code is released under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
 For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 */
-
-enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, TRANSVERSEMERCATOR, EQUALEARTH, MOLLWEIDE, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, CASSINI, LASTENTRYPROJECTION };
+// NEW: VANDERGRINTEN, HAMMER, GALLPETERS, HOBODYER.
+enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, EQUALEARTH, MOLLWEIDE, AITOFF, HAMMER, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, CASSINI, GALLPETERS, HOBODYER, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
-enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION, CONFIGFLIPPOLE, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
+enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION, CONFIGFLIPPOLE, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
 enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1}; // set EXPANDNONE to -1, so that we can do a >= 0 check to see if something is expanded
 
@@ -19,6 +19,7 @@ const int GROUND_TRACK_ITERATION_MAX_STEPS = int(2e4); // 2e4 is arbitrary max l
 const int GROUND_TRACK_HISTORY_SIZE = int(1e3); // Number of datapoints recorded to position history.
 const int MAX_ZOOM = 256; // should be power of 2
 static char MFD_NAME[10] = "Map2";
+const int COLOUR_BIT_DEPTH = 256; // we have 256 shades from red to green. Declared as constant for better readability.
 
 struct
 {
@@ -28,6 +29,7 @@ struct
 	int GRID_RESOLUTION = 2;
 	int LINES_AMOUNT = 5000;
 	double GROUNDTRACK_STEP = 0.1;
+	double GROUNDTRACK_MAXTIMEFRAC = 100.0;
 	double GROUNDTRACK_ORBITS = 3.5;
 	int VIEW_CIRCLE_RESOLUTION = 90;
 	bool ELEVATION_RADAR = false;
@@ -79,7 +81,7 @@ public:
 	static int MsgProc(UINT msg, UINT mfd, WPARAM wparam, LPARAM lparam);
 	bool ConsumeButton(int bt, int event);
 	bool ConsumeKeyBuffered(DWORD key);
-	bool ConsumeKeyImmediate(char* kstate);
+	bool ConsumeKeyImmediate(DWORD key, bool newPress); // Should normally have char *kstate as variable, but as this is only called in ConsumeButton, and is not run by Orbiter, I give myself the liberty to give similar function as KeyBuffered.
 	void StoreStatus(void) const;
 	void RecallStatus(void);
 	void WriteStatus(FILEHANDLE scn) const;
@@ -108,7 +110,7 @@ public:
 	void DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp);
 
 	bool TransformPoint(double longitude, double latitude, double *transformedLongitude, double *transformedLatitude, PROJECTION projection);
-	char* GetProjectionName(void);
+	//char* GetProjectionName(void);
 	char* GetCoordinateString(double longitude, double latitude);
 
 	bool GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude); // return false if altitude below surface
@@ -120,6 +122,7 @@ public:
 	bool SetTargetObject(char* rstr);
 	bool SetGridSeparation(char* rstr);
 	bool SetGridResolution(char* rstr);
+	bool SetMaxPeriodFraction(char* rstr);
 	bool SetNumberOrbitsDisplayed(char* rstr);
 	bool SetSpecificAltitudeSelect(char* rstr);
 
@@ -172,6 +175,7 @@ private:
 	bool autoResolution = true; // automatically control skipEveryNLines value
 	int defaultMapLinesAmount = DEFAULT_VALUES.LINES_AMOUNT; // used for autoResolution when desciding what the max map lines to display is
 	double orbitTrackAngleDelta = DEFAULT_VALUES.GROUNDTRACK_STEP; // TrA angle delta per track leg. Set to 0.01, 0.05, 0.1, 0.5, 1.0
+	double maxPeriodFraction = DEFAULT_VALUES.GROUNDTRACK_MAXTIMEFRAC; // TrA angle max time step, related to reference rotation period.
 	bool orbitTrackGround = bool(DEFAULT_VALUES.TRACK_MODE); // ground track mode. If false, set to orbit track mode.
 	int viewCircleResolution = DEFAULT_VALUES.VIEW_CIRCLE_RESOLUTION; // number of segments in the view circle ("what is visible").
 	double orbitTrackOrbitsNumber = DEFAULT_VALUES.GROUNDTRACK_ORBITS; // number of orbits to show of ground track (limited by max 1e6 seconds).
@@ -193,6 +197,8 @@ private:
 	float cacheMap[100000][2];
 	bool updateCache = true; // never change this other than when caching or changing reference. If memory is lost, the update call is also reactivated.
 	bool coastMap, mapExists;
+
+	double immediateKeyStart = 0.0; // the sysTime for start holding a pan key (centreLat/centreLong adjustment). Note that sysTime is always positive.
 
 	double shipHistory[GROUND_TRACK_HISTORY_SIZE][3]; // record ship coordinates, and last is time stamp
 	int shipHistoryIndex = 0; // index to record to in shipHistory
@@ -217,6 +223,7 @@ private:
 	//oapi::Font* defaultFont;
 	//oapi::Font* configFont;
 	oapi::Font* mapObjectFont;
+	oapi::Pen* gradientRedGreen[COLOUR_BIT_DEPTH];
 };
 
 static bool resetCommand = false; // inform user and RecallStatus that we want to reset
@@ -245,6 +252,7 @@ struct
 	bool autoResolution;
 	int defaultMapLinesAmount;
 	double orbitTrackAngleDelta; // new
+	double maxPeriodFraction; // NEW
 	bool orbitTrackGround;
 	double orbitTrackOrbitsNumber; // new
 	bool displayElevationRadar; // new
@@ -303,6 +311,12 @@ MapMFD::MapMFD(DWORD w, DWORD h, VESSEL* vessel)
 	groundCoverageLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.MAINVIEW);
 	targetGroundCoverageLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.TARGETVIEW);
 	sunIcon = oapiCreateBrush(DEFAULT_COLOURS.SUNICON);
+
+	for (int i = 0; i < COLOUR_BIT_DEPTH; i++)
+	{
+		//gradientRedGreen[i] = oapziCreatePen(1, 5, oapiGetColour(0, int(sqrt(255 * 255 - i * i)), i)); // see this video for why I square and sqrt the colour: https://www.youtube.com/watch?v=LKnqECcg6Gw (TL;DW: brightness)
+		gradientRedGreen[i] = oapiCreatePen(1, 5, oapiGetColour(0, 255 - i, i)); // not correcting for gamma, as the yellow and green are nearly indistinguishable. In this linear way, 0 altitude is "gray", while positive or negative altitude are brighter, standing more out than just in colour.
+	}
 }
 
 // Destructor
@@ -326,6 +340,11 @@ MapMFD::~MapMFD()
 	oapiReleasePen(groundCoverageLine);
 	oapiReleasePen(targetGroundCoverageLine);
 	oapiReleaseBrush(sunIcon);
+
+	for (int i = 0; i < COLOUR_BIT_DEPTH; i++)
+	{
+		oapiReleasePen(gradientRedGreen[i]);
+	}
 }
 
 
@@ -533,12 +552,18 @@ char* GetSpecificProjectionName(int proj)
 		return "Miller";
 	case MERCATOR:
 		return "Mercator";
+	case VANDERGRINTEN:
+		return "Van der Grinten";
 	case TRANSVERSEMERCATOR:
 		return "Transverse Mercator";
 	case EQUALEARTH:
 		return "Equal Earth";
 	case MOLLWEIDE:
 		return "Mollweide";
+	case AITOFF:
+		return "Aitoff";
+	case HAMMER:
+		return "Hammer";
 	case ORTELIUSOVAL:
 		return "Ortelius Oval";
 	case WINKELTRIPEL:
@@ -551,6 +576,10 @@ char* GetSpecificProjectionName(int proj)
 		return "Lambert Azimuthal Equal-area";
 	case CASSINI:
 		return "Cassini";
+	case GALLPETERS:
+		return "Gall-Peters";
+	case HOBODYER:
+		return "Hobo-Dyer";
 	default:
 		return "ERROR";
 	}
@@ -576,6 +605,7 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	oapiReadItem_int(cfgFile, "DefGridResolution", DEFAULT_VALUES.GRID_RESOLUTION);
 	oapiReadItem_int(cfgFile, "DefDefaultLinesAmount", DEFAULT_VALUES.LINES_AMOUNT);
 	oapiReadItem_float(cfgFile, "DefGroundTrackStep", DEFAULT_VALUES.GROUNDTRACK_STEP);
+	oapiReadItem_float(cfgFile, "DefGroundTrackMaxTimePeriodFraction", DEFAULT_VALUES.GROUNDTRACK_MAXTIMEFRAC);
 	oapiReadItem_float(cfgFile, "DefTrackOrbitsNumber", DEFAULT_VALUES.GROUNDTRACK_ORBITS);
 	oapiReadItem_int(cfgFile, "DefViewCircleResolution", DEFAULT_VALUES.VIEW_CIRCLE_RESOLUTION);
 	oapiReadItem_bool(cfgFile, "DefShowAltitudeRadar", DEFAULT_VALUES.ELEVATION_RADAR);
