@@ -267,9 +267,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGPROJECTION:
 				proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION));
 				break;
-			case CONFIGFLIPPOLE:
+			/*case CONFIGFLIPPOLE:
 				azimuthalEquidistantNortPole = !azimuthalEquidistantNortPole;
-				break;
+				break;*/
 			case CONFIGRESETMAP:
 				centreLat = 0.0;
 				centreLong = 0.0;
@@ -346,9 +346,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGPROJECTION:
 				proj = EQUIRECTANGULAR;
 				break;
-			case CONFIGFLIPPOLE:
+			/*case CONFIGFLIPPOLE:
 				azimuthalEquidistantNortPole = true;
-				break;
+				break;*/
 			case CONFIGRESETMAP:
 				centreLat = 0.0;
 				centreLong = 0.0;
@@ -1127,7 +1127,7 @@ bool MapMFD::SetSpecificAltitudeSelect(char* rstr)
 void MapMFD::StoreStatus() const
 {
 	MapMFDState.autoResolution = autoResolution;
-	MapMFDState.azimuthalEquidistantNortPole = azimuthalEquidistantNortPole;
+	//MapMFDState.azimuthalEquidistantNortPole = azimuthalEquidistantNortPole;
 	MapMFDState.centreLat = centreLat;
 	MapMFDState.centreLong = centreLong;
 	MapMFDState.centreZoom = centreZoom;
@@ -1173,7 +1173,7 @@ void MapMFD::RecallStatus()
 	if (oapiGetObjectType(MapMFDState.ref) != OBJTP_INVALID && !resetCommand) // reset command asks us to not recall, so that we set to default
 	{
 		autoResolution = MapMFDState.autoResolution;
-		azimuthalEquidistantNortPole = MapMFDState.azimuthalEquidistantNortPole;
+		//azimuthalEquidistantNortPole = MapMFDState.azimuthalEquidistantNortPole;
 		centreLat = MapMFDState.centreLat;
 		centreLong = MapMFDState.centreLong;
 		centreZoom = MapMFDState.centreZoom;
@@ -1477,11 +1477,11 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	sprintf(cbuf, GetSpecificProjectionName(proj));
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
 
-	sprintf(cbuf, "Azimuth. Equidist. pole");
-	skp->Text(textX0, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
-	if (azimuthalEquidistantNortPole) sprintf(cbuf, "North");
-	else sprintf(cbuf, "South");
-	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
+	//sprintf(cbuf, "Azimuth. Equidist. pole");
+	//skp->Text(textX0, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
+	//if (azimuthalEquidistantNortPole) sprintf(cbuf, "North");
+	//else sprintf(cbuf, "South");
+	//skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
 
 	sprintf(cbuf, "Reset map pan");
 	skp->Text(textX0, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
@@ -1732,18 +1732,19 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 	switch (proj)
 	{
 	case EQUIRECTANGULAR:
-	case MILLER:
+	//case MILLER:
 	case MERCATOR:
 	case VANDERGRINTEN:
+	case ROBINSON:
 	case EQUALEARTH:
 	case MOLLWEIDE:
-	case AITOFF:
 	case HAMMER:
-	case ORTELIUSOVAL:
+	case LOXIMUTHAL:
+	case LASKOWSKI:
+	//case ORTELIUSOVAL:
 	case WINKELTRIPEL:
-	case RECTANGULARPOLYCONIC:
+	//case RECTANGULARPOLYCONIC:
 	case GALLPETERS:
-	case HOBODYER:
 		fillElements = 0; // switch-case doesn't allow for declaring with value, so first declare, then assign
 		double leftmostLongitude, leftmostTerminatorLatitude; // longitude of left edge of map
 		leftmostLongitude = normangle(centreLong - PI); // switch-case doesn't allow for declaring with value, so first declare, then assign
@@ -1874,6 +1875,8 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 		break;
 	case AZIMUTHALEQUIDISTANT:
 	case LAMBERTAZIMUTHAL:
+	case STEREOGRAPHIC:
+	//case GNOMONIC: // Gnomic features all geodesics as straight lines. Which is a problem, as the terminator is a geodesic. DEBUG: make a specific implementation of Gnomic sunfill.
 		/* These are azimuthal projections, where the entire Sun-lit area may be undivided. This occurs if sunLat/sunLong is less than sunAngleView from centreLat/centreLong
 		There are two cases 
 			- Entire Sun-lit in one piece (sunPos - centrePos < 90 deg)
@@ -2003,7 +2006,6 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 
 		break;
 	case TRANSVERSEMERCATOR:
-	case CASSINI:
 		// These are transverse projections. Therefore the daylight will always fill either the left or right side (just like the cylindrical projections [e.g. equirectanguar] have always one pole in light).
 		fillElements = 0; // switch-case doesn't allow for declaring with value, so first declare, then assign
 		double terminatorEquatorLongitude; // longitude of the terminator where it crosses the Equator
@@ -2154,21 +2156,23 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 	switch (proj)
 	{
 	case EQUIRECTANGULAR:
-	case MILLER:
+	//case MILLER:
 	case MERCATOR:
 	case TRANSVERSEMERCATOR:
-	case CASSINI:
 	case GALLPETERS:
-	case HOBODYER:
+	//case GNOMONIC: // gnomonic and stereographic are actually in same class as azimuthal ones, but they have an infinite span, so we never have a border to display
+	case STEREOGRAPHIC: // stereographic is actually in same class as azimuthal ones, but it has an infinite span, so we never have a border to display
 		break;
 	case VANDERGRINTEN:
+	case ROBINSON:
 	case EQUALEARTH:
 	case MOLLWEIDE:
-	case AITOFF:
 	case HAMMER:
-	case ORTELIUSOVAL:
+	case LOXIMUTHAL:
+	case LASKOWSKI:
+	//case ORTELIUSOVAL:
 	case WINKELTRIPEL:
-	case RECTANGULARPOLYCONIC:
+	//case RECTANGULARPOLYCONIC:
 		double decrementValue;
 		decrementValue = 0.999;
 		for (int i = -180; i < 180; i += gridResolution)
@@ -2190,7 +2194,6 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 	case LAMBERTAZIMUTHAL:
 		// These projections are so-called azimuthal, so the boundary is the great-circle 180 deg distance from the centre point.
 		// The encircling shape is thus a 180 deg angular distance for all bearings from centreLong/centreLat, much like the "viewable content"-circle and terminator line.
-		//double decrementValue;
 		decrementValue = 0.999;
 		double firstLong, firstLat, previousLong, previousLat;
 		for (int i = 0; i <= 360; i += gridResolution)
@@ -2228,7 +2231,7 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 		for (int k = 0; k < 180 / gridResolution; k++) // draw latitude meridian
 		{
 			int la = -90 + k * gridResolution;
-			if (!((proj == CASSINI || proj == TRANSVERSEMERCATOR) && abs(normangle(lo * RAD - centreLong)) > PI05 && (la == -gridResolution))) // line crossing equator more than 90 deg from centreLong in Cassini and Transverse Mercator moves over entire display, so don't display that.
+			if (!((proj == TRANSVERSEMERCATOR) && abs(normangle(lo * RAD - centreLong)) > PI05 && (la == -gridResolution))) // line crossing equator more than 90 deg from centreLong in Cassini and Transverse Mercator moves over entire display, so don't display that.
 				DrawLine(lo * RAD, la * RAD, lo * RAD, la * RAD + gridResolution * RAD, skp, false);
 		}
 	}
@@ -2238,8 +2241,7 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 		for (int k = 0; k < 360 / gridResolution; k++)
 		{
 			int lo = -180 + k * gridResolution;
-			//if (!(lo * RAD < normangle(centreLong + PI) && lo * RAD + gridResolution * RAD > normangle(centreLong + PI)) || proj == AZIMUTHALEQUIDISTANT || proj == LAMBERTAZIMUTHAL || proj == CASSINI || proj == TRANSVERSEMERCATOR) // line always propagates right, so if line crosses screen, then don't plot
-			if (!(normangle(lo * RAD - centreLong) > 0.0 && normangle(lo * RAD + gridResolution * RAD - centreLong) < 0.0) || proj == AZIMUTHALEQUIDISTANT || proj == LAMBERTAZIMUTHAL || proj == CASSINI || proj == TRANSVERSEMERCATOR) // line always propagates right, so if line crosses screen, then don't plot
+			if (!(normangle(lo * RAD - centreLong) > 0.0 && normangle(lo * RAD + gridResolution * RAD - centreLong) < 0.0) || proj == AZIMUTHALEQUIDISTANT || proj == LAMBERTAZIMUTHAL || proj == STEREOGRAPHIC || proj == TRANSVERSEMERCATOR) // line always propagates right, so if line crosses screen, then don't plot. Unless azimuthal/transverse plot.
 				DrawLine(lo * RAD, la * RAD, lo * RAD + gridResolution * RAD, la * RAD, skp, false);
 		}
 	}
@@ -3398,6 +3400,29 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 	double k0 = 1.0; // used for transverse Mercator, and several others as miscellanous constant
 	double A1 = 1.340264, A2 = -0.081106, A3 = 0.000893, A4 = 0.003796; // Coeffs used by Equal Earth
 	double theta; // parameter with various values used in Equal Earth and Mollweide
+	const double RobinsonCoeffs[19][2] = { // Robinson coeffs every 5 deg latitude, from 0 to 90
+			{1.0000, 0.0000},
+			{0.9986, 0.0620},
+			{0.9954, 0.1240},
+			{0.9900, 0.1860},
+			{0.9822, 0.2480},
+			{0.9730, 0.3100},
+			{0.9600, 0.3720},
+			{0.9427, 0.4340},
+			{0.9216, 0.4958},
+			{0.8962, 0.5571},
+			{0.8679, 0.6176},
+			{0.8350, 0.6769},
+			{0.7986, 0.7346},
+			{0.7597, 0.7903},
+			{0.7186, 0.8435},
+			{0.6732, 0.8936},
+			{0.6213, 0.9394},
+			{0.5722, 0.9761},
+			{0.5322, 1.0000}
+	};
+	const int BerghausStarLobes = 5; // number of arms in Berghaus Star projection.
+
 
 	longitude = normangle(longitude - centreLong);
 
@@ -3408,11 +3433,11 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLong = longitude;
 		transLat = latitude - centreLat;
 		break;
-	case MILLER:
-		// https://en.wikipedia.org/wiki/Miller_cylindrical_projection
-		transLong = longitude;
-		transLat = 1.25 * log(tan(PI / 4.0 + 0.4 * latitude)) - 1.25 * log(tan(PI / 4.0 + 0.4 * centreLat));
-		break;
+	//case MILLER:
+	//	// https://en.wikipedia.org/wiki/Miller_cylindrical_projection
+	//	transLong = longitude;
+	//	transLat = 1.25 * log(tan(PI / 4.0 + 0.4 * latitude)) - 1.25 * log(tan(PI / 4.0 + 0.4 * centreLat));
+	//	break;
 	case MERCATOR:
 		// https://en.wikipedia.org/wiki/Mercator_projection
 		transLong = longitude;
@@ -3465,6 +3490,35 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 
 		transLong = 0.5 * k0 * log((1.0 + theta) / (1.0 - theta));
 		transLat = k0 * atan2(sin(latitude), cos(latitude) * cos(longitude)) - centreLat;
+		break;
+	case ROBINSON:
+		int idx;
+		idx = max(0, min(18, int(abs(latitude) / (5.0 * RAD))));
+		if (idx >= 18) theta = RobinsonCoeffs[18][0];
+		else // 0 ... 17
+		{
+			A1 = (abs(latitude) / (5.0 * RAD) - double(idx)); // weight of interpolation
+			theta = RobinsonCoeffs[idx][0] * (1.0 - A1) + RobinsonCoeffs[idx + 1][0] * A1; // weighted average of coefficients longitude
+			k0 = RobinsonCoeffs[idx][1] * (1.0 - A1) + RobinsonCoeffs[idx + 1][1] * A1; // weighted average of coefficients latitude
+		}
+
+		transLong = 0.8487 * theta * longitude;
+		transLat = 1.3523 * k0;
+		if (latitude < 0.0) transLat *= -1.0;
+
+		// centreLat
+		idx = max(0, min(18, int(abs(centreLat) / (5.0 * RAD))));
+		if (idx >= 18) theta = RobinsonCoeffs[18][0];
+		else // 0 ... 17
+		{
+			A1 = (abs(centreLat) / (5.0 * RAD) - double(idx)); // weight of interpolation
+			theta = RobinsonCoeffs[idx][0] * (1.0 - A1) + RobinsonCoeffs[idx + 1][0] * A1; // weighted average of coefficients longitude
+			k0 = RobinsonCoeffs[idx][1] * (1.0 - A1) + RobinsonCoeffs[idx + 1][1] * A1; // weighted average of coefficients latitude
+		}
+		theta = 1.3523 * k0;
+		if (centreLat < 0.0) theta *= -1.0;
+		transLat -= theta;
+
 		break;
 	case EQUALEARTH:
 		// https://en.wikipedia.org/wiki/Equal_Earth_projection
@@ -3526,20 +3580,6 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLat -= sqrt(2.0) * sin(theta);
 
 		break;
-	case AITOFF:
-		// https://en.wikipedia.org/wiki/Aitoff_projection
-		k0 = acos(cos(latitude) * cos(longitude / 2.0)); // alpha on wiki
-		theta = sin(k0) / k0; // sinc(alpha)
-		if (k0 == 0.0) theta = 1.0;
-		transLong = 2.0 * cos(latitude) * sin(longitude / 2.0) / theta;
-		transLat = sin(latitude) / theta;
-
-		// Subtract centreLat
-		k0 = acos(cos(centreLat));
-		theta = sin(k0) / k0;
-		if (k0 == 0.0) theta = 1.0;
-		transLat -= sin(centreLat) / theta;
-		break;
 	case HAMMER:
 		// https://en.wikipedia.org/wiki/Hammer_projection
 		transLong = 2.0 * sqrt(2.0) * cos(latitude) * sin(longitude / 2.0) / sqrt(1.0 + cos(latitude) * cos(longitude / 2.0));
@@ -3547,25 +3587,37 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLat -= sqrt(2.0) * sin(centreLat) / sqrt(1.0 + cos(centreLat)); // subtract centreLat
 		//transLat -= centreLat;
 		break;
-	case ORTELIUSOVAL:
-		// https://en.wikipedia.org/wiki/Ortelius_oval_projection
-		if (longitude == 0.0)
-		{
-			transLat = latitude - centreLat;
-			transLong = longitude; // = 0.0
-		}
-		else
-		{
-			theta = 0.5 * (PI * PI / (4.0 * abs(longitude)) + abs(longitude));
-			transLat = latitude;
-			if (abs(longitude) < PI05) transLong = abs(longitude) - theta + sqrt(theta * theta - pow(transLat, 2));
-			else transLong = sqrt(PI * PI / 4.0 - latitude * latitude) + abs(longitude) - PI05;
-			if (longitude < 0.0) transLong = -abs(transLong);
-			else transLong = abs(transLong);
-			
-			transLat -= centreLat;
-		}
+	case LOXIMUTHAL:
+		transLong = longitude * (latitude - centreLat) / log(tan(PI / 4.0 + latitude / 2.0) / tan(PI / 4.0 + centreLat / 2.0));
+		transLat = latitude - centreLat;
+
+		if (abs(transLat) < 1e-4) transLong = longitude * cos(centreLat);
+
 		break;
+	case LASKOWSKI:
+		transLong = longitude * (0.975534 + latitude * latitude * (-0.119161 + longitude * longitude * -0.0143059 + latitude * latitude * -0.0547009));
+		transLat = latitude * (1.00384 + longitude * longitude * (0.0802894 + latitude * latitude * -0.02855 + longitude * longitude * 0.000199025) + latitude * latitude * (0.0998909 + latitude * latitude * -0.0491032));
+		transLat -= centreLat * (1.00384 + centreLat * centreLat * (0.0998909 + centreLat * centreLat * -0.0491032));
+		break;
+	//case ORTELIUSOVAL:
+	//	// https://en.wikipedia.org/wiki/Ortelius_oval_projection
+	//	if (longitude == 0.0)
+	//	{
+	//		transLat = latitude - centreLat;
+	//		transLong = longitude; // = 0.0
+	//	}
+	//	else
+	//	{
+	//		theta = 0.5 * (PI * PI / (4.0 * abs(longitude)) + abs(longitude));
+	//		transLat = latitude;
+	//		if (abs(longitude) < PI05) transLong = abs(longitude) - theta + sqrt(theta * theta - pow(transLat, 2));
+	//		else transLong = sqrt(PI * PI / 4.0 - latitude * latitude) + abs(longitude) - PI05;
+	//		if (longitude < 0.0) transLong = -abs(transLong);
+	//		else transLong = abs(transLong);
+	//		
+	//		transLat -= centreLat;
+	//	}
+	//	break;
 	case WINKELTRIPEL:
 		// https://en.wikipedia.org/wiki/Winkel_tripel_projection
 		k0 = acos(2.0 / PI);
@@ -3582,72 +3634,38 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 			transLat = 0.5 * (latitude + sin(latitude) / sin(theta) * theta) - centreLat;
 		}
 		break;
-	case RECTANGULARPOLYCONIC:
-		// https://en.wikipedia.org/wiki/Rectangular_polyconic_projection
-		if (latitude == 0.0) latitude = 1e-5; // avoid division by 0
+	//case RECTANGULARPOLYCONIC:
+	//	// https://en.wikipedia.org/wiki/Rectangular_polyconic_projection
+	//	if (latitude == 0.0) latitude = 1e-5; // avoid division by 0
 
-		if (centreLat == 0.0) k0 = 0.5 * longitude;
-		else k0 = tan(0.5 * longitude * sin(centreLat)) / sin(centreLat);
+	//	if (centreLat == 0.0) k0 = 0.5 * longitude;
+	//	else k0 = tan(0.5 * longitude * sin(centreLat)) / sin(centreLat);
 
-		theta = 2.0 * atan(k0 * sin(latitude));
+	//	theta = 2.0 * atan(k0 * sin(latitude));
 
-		transLong = sin(theta) / tan(latitude);
-		transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
+	//	transLong = sin(theta) / tan(latitude);
+	//	transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
 
-		// I have actually messed up the implementation in the above code (changing the latitude with correct scale to follow centreLat). But I like the look, so I've kept it.
-		// For an implementation consistent with other implemented projections (like Mollweide), then try the version below.
-		//if (latitude == 0.0) latitude = 1e-5; // avoid division by 0
+	//	// I have actually messed up the implementation in the above code (changing the latitude with correct scale to follow centreLat). But I like the look, so I've kept it.
+	//	// For an implementation consistent with other implemented projections (like Mollweide), then try the version below.
+	//	//if (latitude == 0.0) latitude = 1e-5; // avoid division by 0
 
-		//k0 = 0.5 * longitude;
-		////else k0 = tan(0.5 * longitude * sin(0.0)) / sin(0.0);
+	//	//k0 = 0.5 * longitude;
+	//	////else k0 = tan(0.5 * longitude * sin(0.0)) / sin(0.0);
 
-		//theta = 2.0 * atan(k0 * sin(latitude));
+	//	//theta = 2.0 * atan(k0 * sin(latitude));
 
-		//transLong = sin(theta) / tan(latitude);
-		//transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
-		break;
+	//	//transLong = sin(theta) / tan(latitude);
+	//	//transLat = normangle(latitude - centreLat) + (1.0 - cos(theta)) / tan(latitude); // weigh up for the global centreLat subtraction
+	//	break;
 	case AZIMUTHALEQUIDISTANT:
 		// https://en.wikipedia.org/wiki/Azimuthal_equidistant_projection
-		// Offset centreLat by PI05, so that we begin centering on the North Pole
-		if (azimuthalEquidistantNortPole) // centre North
-		{
-			if (centreLat + PI05 == PI05)
-			{
-				theta = longitude;
-				k0 = PI05 - latitude;
-			}
-			else
-			{
-				theta = -atan2(cos(latitude) * sin(longitude), cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
-				k0 = acos(sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude));
-			}
+		theta = sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude); // cos(great distance)
+		k0 = acos(theta) / sqrt(1.0 - theta * theta);
+		if (theta > 0.9999) k0 = 1.0;
+		transLong = k0 * cos(latitude) * sin(longitude);
+		transLat = k0 * (cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
 
-			transLong = -k0 * sin(theta);
-			transLat = k0 * cos(theta);
-		}
-		else // centre South
-		{
-			if (centreLat + PI05 == PI05)
-			{
-				theta = longitude;
-				k0 = -PI05 - latitude;
-			}
-			else
-			{
-				theta = atan2(cos(latitude) * sin(longitude), cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
-				k0 = acos(sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude));
-			}
-
-			transLong = -k0 * sin(theta);
-			transLat = -k0 * cos(theta);
-		}
-
-		if (!(0.0 <= k0 && k0 <= PI))
-		{
-			// If latitude and centreLat are equal (eg. in tracking mode), we get k0 undefined, probably from floating point error acos(x > 1.0). Then set manually to 0,0, which is correct value in such cases.
-			transLong = 0.0;
-			transLat = 0.0;
-		}
 
 		break;
 	case LAMBERTAZIMUTHAL:
@@ -3658,21 +3676,28 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLong = theta * cos(latitude) * sin(longitude);
 		transLat = theta * (cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
 		break;
-	case CASSINI:
-		// https://en.wikipedia.org/wiki/Cassini_projection
-		transLong = asin(cos(latitude) * sin(longitude));
-		transLat = atan2(sin(latitude), cos(latitude) * cos(longitude)) - centreLat;
+	case STEREOGRAPHIC:
+		// https://en.wikipedia.org/wiki/Stereographic_projection_in_cartography
+		theta = sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude); // cos(great distance)
+
+		k0 = 2.0 / (1.0 + theta);
+		transLong = k0 * cos(latitude) * sin(longitude);
+		transLat = k0 * (cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
 		break;
+	//case GNOMONIC:
+	//	// https://mathworld.wolfram.com/GnomonicProjection.html
+	//	theta = sin(centreLat) * sin(latitude) + cos(centreLat) * cos(latitude) * cos(longitude); // cos(great distance)
+
+	//	if (theta <= 0.2) k0 = 3.0 * acos(theta) / sqrt(1.0 - theta * theta);
+	//	else k0 = 1.0 / theta;
+
+	//	transLong = k0 * cos(latitude) * sin(longitude);
+	//	transLat = k0 * (cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude));
+	//	break;
 	case GALLPETERS:
 		transLong = longitude;
 		transLat = 2.0 * sin(latitude);
 		transLat -= 2.0 * sin(centreLat);
-		break;
-	case HOBODYER:
-		theta = 37.5 * RAD; // standard latitude of a cylindrical equal-area projection
-		transLong = longitude;
-		transLat = sin(latitude) / cos(theta) / cos(theta);
-		transLat -= sin(centreLat) / cos(theta) / cos(theta);
 		break;
 	default:
 		sprintf(oapiDebugString(), "ERROR, default in TransformPoint! %.2f", oapiGetSimTime());
@@ -3706,7 +3731,6 @@ bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double c
 	// TrA in x seconds
 	if (el.e > 1.0) M = M0 + sqrt(refMu / pow(-el.a, 3)) * t; // http://control.asu.edu/Classes/MAE462/462Lecture05.pdf page 37.
 	else M = posangle(M0 + PI2 * t / prm.T);
-	//else M = fmod(M0 + PI2 * t / prm.T, PI2);
 	double TrA = MnA2TrA(M, el.e);
 	double TrA0 = prm.TrA;
 
@@ -3798,53 +3822,9 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 
 	prm->EcA = eccentricAnomaly;
 	prm->TrA = TrA;
-	prm->T = period; // this will be erranous for hyperbolic orbits
-	//if (el.e > 1.0) prm->T = -1.0; // give it a sane value, for calculations sake
+	prm->T = period; // this will be erranous for hyperbolic orbits, but it won't bother us.
 	prm->MnA = MnA;
 }
-
-//char* MapMFD::GetProjectionName(void)
-//{
-//	// Write projection
-//	switch (proj)
-//	{
-//	case EQUIRECTANGULAR:
-//		return "Equirectangular";
-//	case MILLER:
-//		return "Miller";
-//	case MERCATOR:
-//		return "Mercator";
-//	case VANDERGRINTEN:
-//		return "Van der Grinten";
-//	case TRANSVERSEMERCATOR:
-//		return "Transverse Mercator";
-//	case EQUALEARTH:
-//		return "Equal Earth";
-//	case MOLLWEIDE:
-//		return "Mollweide";
-//	case HAMMER:
-//		return "Hammer";
-//	case ORTELIUSOVAL:
-//		return "Ortelius Oval";
-//	case WINKELTRIPEL:
-//		return "Winkel Tripel";
-//	case RECTANGULARPOLYCONIC:
-//		return "Rectangular Polyconic";
-//	case AZIMUTHALEQUIDISTANT:
-//		return "Azimuthal Equidistant";
-//	case LAMBERTAZIMUTHAL:
-//		return "Lambert Azimuthal Equal-area";
-//	case CASSINI:
-//		return "Cassini";
-//	case GALLPETERS:
-//		return "Gall-Peters";
-//	case HOBODYER:
-//		return "Hobo-Dyer";
-//	default:
-//		return "ERROR";
-//	}
-//	return "ERROR";
-//}
 
 char* MapMFD::GetCoordinateString(double longitude, double latitude)
 {
