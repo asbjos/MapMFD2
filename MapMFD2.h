@@ -12,15 +12,17 @@ For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 //enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, AITOFF, HAMMER, LOXIMUTHAL, LASKOWSKI, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GNOMONIC, BERGHAUSSTAR, CASSINI, GALLPETERS, HOBODYER, LASTENTRYPROJECTION };
 enum PROJECTION { EQUIRECTANGULAR, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, HAMMER, LOXIMUTHAL, LASKOWSKI, WINKELTRIPEL, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GALLPETERS, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
-enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
+enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGMARKERS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
 enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1}; // set EXPANDNONE to -1, so that we can do a >= 0 check to see if something is expanded
 
 const int GROUND_TRACK_ITERATION_MAX_STEPS = int(2e4); // 2e4 is arbitrary max limit of what I'll allow. If you want a longer plot, there's no problem to increase time delta in config
 const int GROUND_TRACK_HISTORY_SIZE = int(1e3); // Number of datapoints recorded to position history.
-const int MAX_ZOOM = 256; // should be power of 2
+const int MAX_ZOOM = 32768; // should be power of 2
 static char MFD_NAME[10] = "Map2";
 const int COLOUR_BIT_DEPTH = 256; // we have 256 shades from red to green. Declared as constant for better readability.
+const int TOTAL_MARKERS_ALLOWED_TO_BE_ENABLED = 50;
+const int TOTAL_MARKERS_PER_PLANET = 50;
 
 struct
 {
@@ -51,6 +53,7 @@ struct
 	DWORD TARGETTRACK = 0x00FFFF;
 	DWORD GRID = 0x505050;
 	DWORD BASE = 0xF0F0F0;
+	DWORD MARKER[6] = { 0x00FFFF, 0xFFFF00, 0x4040FF, 0xFF00FF, 0x40FF40, 0xFF8080 };
 	DWORD SUNFILL = 0x303030;
 	DWORD TERMINATOR = 0xC0C0C0;
 	DWORD SUNICON = 0x13B8FD;
@@ -92,11 +95,13 @@ public:
 	void ConfigScreen(oapi::Sketchpad* skp);
 	void ReferenceListScreen(oapi::Sketchpad* skp);
 	void TargetListScreen(oapi::Sketchpad* skp);
+	void MarkerListScreen(oapi::Sketchpad* skp);
 
 	// Map screen functions. Used to clean up the MapScreen function.
 	void MakeSunLight(oapi::Sketchpad* skp);
 	void MakeGridLines(oapi::Sketchpad* skp);
 	void MakeMap(oapi::Sketchpad* skp, const char* refName, int* txtPos);
+	void MakeMarkers(oapi::Sketchpad* skp, const char* refName);
 	void MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp);
 	void MakeTargets(oapi::Sketchpad* skp, double currentLong, double currentLat, int *infoLinesDrwn);
 	void MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLat, double currentRad, int* infoLinesDrwn);
@@ -105,6 +110,7 @@ public:
 	void SetNewReference(OBJHANDLE hRef);
 	bool AddOrRemoveTarget(OBJHANDLE hRef);
 	bool ObjectAlreadyInTarget(OBJHANDLE hRef);
+	bool AddOrRemoveMarker(const char *fileName);
 
 	bool DrawLine(double long0, double lat0, double long1, double lat1, oapi::Sketchpad* skp, bool safetyCheck = true);
 	bool DrawFeature(double longitude, double latitude, int size, MAPFEATURE feature, oapi::Sketchpad* skp, char *label);
@@ -134,7 +140,7 @@ public:
 	VECTOR3 Ecl2Equ(VECTOR3 Ecl);
 	VECTOR3 Coord2Vector(double longitude, double latitude);
 
-	void myStrncpy(char* writeTo, const char* readFrom, int len);
+	//void myStrncpy(char* writeTo, const char* readFrom, int len);
 
 private:
 	OBJHANDLE ref; // planet reference
@@ -151,6 +157,7 @@ private:
 
 	bool referenceListScreen = false;
 	bool targetListScreen = false;
+	bool markerListScreen = false;
 	int referenceSelection = 0;
 	int currentReferenceTopListed = 0;
 	int referencePlanetSelection = 0; // planet nr. selected
@@ -163,6 +170,9 @@ private:
 	TARGETEXPANDMODES targetExpand = EXPANDNONE;
 	int targetSelection = 0;
 	int currentTargetTopListed = 0;
+
+	int markerSelection = 0;
+	int currentMarkerTopListed = 0;
 
 	VESSEL* v; // vessel instance
 	int W, H; // screen width and height in pixels
@@ -215,6 +225,7 @@ private:
 	oapi::Pen* targetPosition;
 	oapi::Pen* gridLines;
 	oapi::Pen* baseBox;
+	oapi::Pen* markerPen[6]; // 6 different pen colours (set by ColourIdx 0-5 in marker file)
 	oapi::Brush* sunlitSide;
 	oapi::Brush* black; // used to plot darkness on sunlit side, always black
 	oapi::Pen* terminatorLine;
@@ -225,7 +236,14 @@ private:
 	//oapi::Font* configFont;
 	oapi::Font* mapObjectFont;
 	oapi::Pen* gradientRedGreen[COLOUR_BIT_DEPTH];
+
+	// Markers
+	int totalMarkersInReference = 0;
 };
+
+// Outside, so that we can populate in config reading.
+char enabledMarkers[TOTAL_MARKERS_ALLOWED_TO_BE_ENABLED][300]; // at most 50 marker files enabeled. As of now, Orbiter has 7 for Earth and 6 for Moon, so I don't think more should be necessary. But Venus has 23! Obsobs.
+int numMarkers = 0;
 
 static bool resetCommand = false; // inform user and RecallStatus that we want to reset
 static bool debugInformation = false;
@@ -306,6 +324,10 @@ MapMFD::MapMFD(DWORD w, DWORD h, VESSEL* vessel)
 	targetPosition = oapiCreatePen(1, 3, DEFAULT_COLOURS.TARGETTRACK);
 	gridLines = oapiCreatePen(1, 1, DEFAULT_COLOURS.GRID);
 	baseBox = oapiCreatePen(1, 1, DEFAULT_COLOURS.BASE);
+	for (int i = 0; i < 6; i++)
+	{
+		markerPen[i] = oapiCreatePen(1, 1, DEFAULT_COLOURS.MARKER[i]);
+	}
 	sunlitSide = oapiCreateBrush(DEFAULT_COLOURS.SUNFILL);
 	black = oapiCreateBrush(0x000000);
 	terminatorLine = oapiCreatePen(1, 1, DEFAULT_COLOURS.TERMINATOR);
@@ -335,6 +357,7 @@ MapMFD::~MapMFD()
 	oapiReleasePen(targetPosition);
 	oapiReleasePen(gridLines);
 	oapiReleasePen(baseBox);
+	for (int i = 0; i < 6; i++) oapiReleasePen(markerPen[i]);
 	oapiReleaseBrush(sunlitSide);
 	oapiReleaseBrush(black);
 	oapiReleasePen(terminatorLine);
@@ -354,6 +377,7 @@ const int NUMBER_BUTTONS_DEFAULT = 12;
 const int NUMBER_BUTTONS_CONFIG = 5;
 const int NUMBER_BUTTONS_REFERENCE = 6;
 const int NUMBER_BUTTONS_TARGET = 7;
+const int NUMBER_BUTTONS_MARKER = 4;
 char* MapMFD::ButtonLabel(int bt)
 {
 	// The labels for the two buttons used by our MFD mode
@@ -365,6 +389,7 @@ char* MapMFD::ButtonLabel(int bt)
 
 	static char* labelReference[NUMBER_BUTTONS_REFERENCE] = { "UP", "DN", "MOD", "OK", "DEF", "TXT" };
 	static char* labelTarget[NUMBER_BUTTONS_TARGET] = { "UP", "DN", "MOD", "SEL", "BCK", "TXT", "NEA" };
+	static char* labelMarker[NUMBER_BUTTONS_MARKER] = { "UP", "DN", "MOD", "BCK" };
 
 	if (configScreen)
 	{
@@ -377,6 +402,10 @@ char* MapMFD::ButtonLabel(int bt)
 	else if (targetListScreen)
 	{
 		return (bt < NUMBER_BUTTONS_TARGET ? labelTarget[bt] : 0);
+	}
+	else if (markerListScreen)
+	{
+		return (bt < NUMBER_BUTTONS_MARKER ? labelMarker[bt] : 0);
 	}
 	else
 	{
@@ -463,7 +492,7 @@ int MapMFD::ButtonMenu(const MFDBUTTONMENU** menu) const
 		{"Text input", 0, 'T'}
 	};
 
-	// The menu descriptions in refList view
+	// The menu descriptions in tgtList view
 	static const MFDBUTTONMENU tgtMnu[NUMBER_BUTTONS_TARGET] = {
 		{"Move selection up", 0, '-'},
 		{"Move selection down", 0, '='},
@@ -472,6 +501,14 @@ int MapMFD::ButtonMenu(const MFDBUTTONMENU** menu) const
 		{"Return to map", 0, 'O'},
 		{"Text input", 0, 'T'},
 		{"Nearest object", 0, 'N'}
+	};
+
+	// The menu descriptions in mkrList view
+	static const MFDBUTTONMENU mkrMnu[NUMBER_BUTTONS_MARKER] = {
+		{"Move selection up", 0, '-'},
+		{"Move selection down", 0, '='},
+		{"Modify selected marker", 0, 'M'},
+		{"Return to map", 0, 'O'}
 	};
 
 	if (menu)
@@ -490,6 +527,11 @@ int MapMFD::ButtonMenu(const MFDBUTTONMENU** menu) const
 		{
 			*menu = tgtMnu;
 			return NUMBER_BUTTONS_TARGET;
+		}
+		else if (markerListScreen)
+		{
+			*menu = mkrMnu;
+			return NUMBER_BUTTONS_MARKER;
 		}
 		else
 		{
@@ -591,6 +633,19 @@ char* GetSpecificProjectionName(int proj)
 	return "ERROR";
 }
 
+// Because strncpy sucks, I have to make my own >:(
+void myStrncpy(char* writeTo, const char* readFrom, int len)
+{
+	int i = 0;
+	while (i < len && readFrom[i] != '\0')
+	{
+		writeTo[i] = readFrom[i];
+		i++;
+	}
+	writeTo[i] = '\0';
+}
+
+
 DLLCLBK void InitModule(HINSTANCE hDLL)
 {
 	MFDMODESPECEX spec;
@@ -649,11 +704,42 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	ReadUserColour(cfgFile, "ColourTargetTrack", &DEFAULT_COLOURS.TARGETTRACK);
 	ReadUserColour(cfgFile, "ColourGrid", &DEFAULT_COLOURS.GRID);
 	ReadUserColour(cfgFile, "ColourBase", &DEFAULT_COLOURS.BASE);
+	for (int i = 0; i < 6; i++)
+	{
+		char ColourName[20];
+		sprintf(ColourName, "ColourMarker%i", i);
+		ReadUserColour(cfgFile, ColourName, &DEFAULT_COLOURS.MARKER[i]);
+	}
 	ReadUserColour(cfgFile, "ColourSunFill", &DEFAULT_COLOURS.SUNFILL);
 	ReadUserColour(cfgFile, "ColourTerminator", &DEFAULT_COLOURS.TERMINATOR);
 	ReadUserColour(cfgFile, "ColourSunIcon", &DEFAULT_COLOURS.SUNICON);
 	ReadUserColour(cfgFile, "ColourMainView", &DEFAULT_COLOURS.MAINVIEW);
 	ReadUserColour(cfgFile, "ColourTargetView", &DEFAULT_COLOURS.TARGETVIEW);
+
+	// Enable default markers
+	char defaultMarkers[2000]; // many full paths can get long.
+	char markerFilePath[200];
+	oapiReadItem_string(cfgFile, "DefaultMarkers", defaultMarkers); // read entire string
+
+	int startPath = 0; // initialise at beginning.
+	int endPath = strlen(defaultMarkers); // initialise at end of line
+	comma = "hello world"; // give some non-NULL value
+	while (comma != NULL && strlen(defaultMarkers) > 10) // contents in default
+	{
+		comma = strchr(defaultMarkers + startPath, ',');
+		if (comma != NULL) endPath = comma - defaultMarkers;
+		myStrncpy(markerFilePath, defaultMarkers + startPath, endPath - startPath);
+
+		while (markerFilePath[0] == ' ') myStrncpy(markerFilePath, markerFilePath + 1, strlen(markerFilePath)); // remove leading spaces
+		while (markerFilePath[strlen(markerFilePath) - 1] == ' ') myStrncpy(markerFilePath, markerFilePath, strlen(markerFilePath) - 1); // remove trailing spaces
+
+		sprintf(enabledMarkers[numMarkers], markerFilePath);
+		numMarkers++;
+		oapiWriteLogV("MapMFD2: default marker %i <%s>", numMarkers, markerFilePath);
+
+		startPath = comma - defaultMarkers + 1; // update start path
+		endPath = strlen(defaultMarkers); // assume until end of string, unless a new comma is found.
+	}
 
 	oapiCloseFile(cfgFile, FILE_IN);
 }
@@ -664,18 +750,4 @@ DLLCLBK void ExitModule(HINSTANCE hDLL)
 	oapiUnregisterMFDMode(g_MFDmode);
 
 	resetCommand = true; // tell MFD that we have locked Orbiter, and don't want to recall from RecallStatus
-}
-
-// Other
-
-// Because strncpy sucks, I have to make my own >:(
-void MapMFD::myStrncpy(char* writeTo, const char* readFrom, int len)
-{
-	int i = 0;
-	while (i < len && readFrom[i] != '\0')
-	{
-		writeTo[i] = readFrom[i];
-		i++;
-	}
-	writeTo[i] = '\0';
 }

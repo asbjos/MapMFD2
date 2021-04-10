@@ -23,6 +23,14 @@
 #include "orbitersdk.h"
 #include "MapMFD2.h"
 
+//#include <string>
+//#include <iostream>
+#define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
+#include <experimental/filesystem>
+//using namespace std;
+namespace fs = std::experimental::filesystem;
+
+
 bool MapMFD::Update(oapi::Sketchpad* skp)
 {
 	if (configScreen)
@@ -37,6 +45,10 @@ bool MapMFD::Update(oapi::Sketchpad* skp)
 	{
 		TargetListScreen(skp);
 	}
+	else if (markerListScreen)
+	{
+		MarkerListScreen(skp);
+	}
 	else
 	{
 		MapScreen(skp);
@@ -48,7 +60,7 @@ bool MapMFD::Update(oapi::Sketchpad* skp)
 bool MapMFD::ConsumeButton(int bt, int event)
 {
 	// The centreLong/centreLat pan buttons are immediate, so process entire pressed event
-	if (!configScreen && !referenceListScreen && !targetListScreen) // in map screen
+	if (!configScreen && !referenceListScreen && !targetListScreen && !markerListScreen) // in map screen
 	{
 		bool newPress = false;
 		if (event & PANEL_MOUSE_LBDOWN) newPress = true; // new click
@@ -159,6 +171,25 @@ bool MapMFD::ConsumeButton(int bt, int event)
 			return ConsumeKeyBuffered(OAPI_KEY_N);
 		}
 		else return false;
+	}
+	else if (markerListScreen)
+	{
+		if (bt == 0)
+		{
+			return ConsumeKeyBuffered(OAPI_KEY_MINUS);
+		}
+		if (bt == 1)
+		{
+			return ConsumeKeyBuffered(OAPI_KEY_EQUALS);
+		}
+		if (bt == 2)
+		{
+			return ConsumeKeyBuffered(OAPI_KEY_M);
+		}
+		if (bt == 3)
+		{
+			return ConsumeKeyBuffered(OAPI_KEY_O);
+		}
 	}
 	else
 	{
@@ -310,6 +341,12 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				else if (viewCircleResolution == 120) viewCircleResolution = 180;
 				else if (viewCircleResolution == 180) viewCircleResolution = 360;
 				else viewCircleResolution = 60;
+				break;
+			case CONFIGMARKERS:
+				markerListScreen = true;
+				configScreen = false; // byebye
+				InvalidateButtons();
+				//InvalidateDisplay();
 				break;
 			case CONFIGRESETALL:
 				resetCommand = true;
@@ -764,6 +801,56 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			return false;
 		}
 	}
+	else if (markerListScreen)
+	{
+		char refName[50];
+		oapiGetObjectName(ref, refName, 50);
+		char folderPath[100];
+		sprintf(folderPath, "Config\\%s\\Marker", refName);
+		const int TOTAL_MARKERS_THIS_PLANET = 50;
+		char availableMarkers[TOTAL_MARKERS_THIS_PLANET][200]; // allow 50 markers. No name should be longer than 200 characters.
+		int markersInFolder = 0;
+
+		for (const auto& entry : fs::directory_iterator(folderPath))
+		{
+			std::string myString{ entry.path().u8string() };
+			sprintf(availableMarkers[markersInFolder], myString.c_str());
+			markersInFolder++;
+		}
+
+		int numberMarkerChoices = markersInFolder;
+		switch (key)
+		{
+		case OAPI_KEY_MINUS:
+			markerSelection = (markerSelection + numberMarkerChoices - 1) % numberMarkerChoices; // + 9 instead of -1, which results in negative result
+			if (markerSelection < currentMarkerTopListed) currentMarkerTopListed = markerSelection;
+			if (markerSelection > currentMarkerTopListed + entriesPerPage) currentMarkerTopListed = markerSelection - entriesPerPage;
+
+			InvalidateDisplay();
+			return true;
+		case OAPI_KEY_EQUALS:
+			markerSelection = (markerSelection + 1) % numberMarkerChoices;
+			if (markerSelection < currentMarkerTopListed) currentMarkerTopListed = markerSelection;
+			if (markerSelection > currentMarkerTopListed + entriesPerPage) currentMarkerTopListed = markerSelection - entriesPerPage;
+
+			InvalidateDisplay();
+			return true;
+		case OAPI_KEY_M:
+			// If selected marker in enabled -> disable
+			// else -> enable
+			return AddOrRemoveMarker(availableMarkers[markerSelection]);
+
+			InvalidateDisplay();
+			return true;
+		case OAPI_KEY_O: // return home
+			markerListScreen = false;
+			InvalidateButtons();
+			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
+			return true;
+		default:
+			return false;
+		}
+	}
 	else // default map screen
 	{
 		switch (key)
@@ -899,21 +986,6 @@ bool MapMFD::ConsumeKeyImmediate(DWORD key, bool newPress)
 	angDelta = min(angDelta, 360.0 * RAD); // don't allow faster than 360 deg/s. Currently takes sqrt((360 - 1) / 7.5) = 6.9 seconds to hit limit.
 	// And then finally adjust for zoom:
 	angDelta /= double(centreZoom);
-
-	/*case OAPI_KEY_MINUS:
-		centreLat += 15.0 * RAD / double(centreZoom);
-		if (centreLat > PI05) centreLat = PI05;
-		return true;
-	case OAPI_KEY_EQUALS:
-		centreLat -= 15.0 * RAD / double(centreZoom);
-		if (centreLat < -PI05) centreLat = -PI05;
-		return true;
-	case OAPI_KEY_LBRACKET:
-		centreLong = normangle(centreLong - 15.0 * RAD / double(centreZoom));
-		return true;
-	case OAPI_KEY_RBRACKET:
-		centreLong = normangle(centreLong + 15.0 * RAD / double(centreZoom));
-		return true;*/
 
 	switch (key)
 	{
@@ -1173,7 +1245,6 @@ void MapMFD::RecallStatus()
 	if (oapiGetObjectType(MapMFDState.ref) != OBJTP_INVALID && !resetCommand) // reset command asks us to not recall, so that we set to default
 	{
 		autoResolution = MapMFDState.autoResolution;
-		//azimuthalEquidistantNortPole = MapMFDState.azimuthalEquidistantNortPole;
 		centreLat = MapMFDState.centreLat;
 		centreLong = MapMFDState.centreLong;
 		centreZoom = MapMFDState.centreZoom;
@@ -1373,6 +1444,9 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	// Draw map
 	MakeMap(skp, refName, &textPos);
 
+	// Draw markers (data files in body folder [e.g. Config\Moon\Marker\Miscellaneous.mkr])
+	MakeMarkers(skp, refName);
+
 	// Draw surface bases and vessels
 	MakeSurfaceBasesAndVessels(skp);
 
@@ -1414,7 +1488,7 @@ void MapMFD::MapScreen(oapi::Sketchpad* skp)
 	else sprintf(cbuf, "   ");
 
 	if (centreZoom > 1) sprintf(cbuf, "%s  ZM %i", cbuf, centreZoom);
-	skp->Text(textDX * 60, 0, cbuf, strlen(cbuf));
+	skp->Text(textDX * 53, 0, cbuf, strlen(cbuf));
 
 	//sprintf(cbuf, GetProjectionName());
 	sprintf(cbuf, GetSpecificProjectionName(proj));
@@ -1477,12 +1551,6 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	sprintf(cbuf, GetSpecificProjectionName(proj));
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
 
-	//sprintf(cbuf, "Azimuth. Equidist. pole");
-	//skp->Text(textX0, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
-	//if (azimuthalEquidistantNortPole) sprintf(cbuf, "North");
-	//else sprintf(cbuf, "South");
-	//skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGFLIPPOLE) * dY, cbuf, strlen(cbuf));
-
 	sprintf(cbuf, "Reset map pan");
 	skp->Text(textX0, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
 	sprintf(cbuf, "%.1f\u00B0N %.1f\u00B0E", centreLat * DEG, centreLong * DEG);
@@ -1538,6 +1606,11 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	skp->Text(textX0, textY0 + int(CONFIGPLANETVIEWSEGMENTS) * dY, cbuf, strlen(cbuf));
 	sprintf(cbuf, "%i", viewCircleResolution);
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPLANETVIEWSEGMENTS) * dY, cbuf, strlen(cbuf));
+
+	sprintf(cbuf, "Select markers");
+	skp->Text(textX0, textY0 + int(CONFIGMARKERS) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, "Press MOD");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGMARKERS) * dY, cbuf, strlen(cbuf));
 
 	sprintf(cbuf, "Reset MFD");
 	skp->Text(textX0, textY0 + int(CONFIGRESETALL) * dY, cbuf, strlen(cbuf));
@@ -1691,6 +1764,87 @@ void MapMFD::TargetListScreen(oapi::Sketchpad* skp)
 	// Create selection box
 	skp->SetPen(mainOrbitTrack); // re-use old pen.
 	skp->Rectangle(textX0 - 5, textY0 + (targetSelection - currentTargetTopListed) * dY, W - textX0, textY0 + dY + (targetSelection - currentTargetTopListed) * dY);
+}
+
+void MapMFD::MarkerListScreen(oapi::Sketchpad* skp)
+{
+	// Stock Map MFD has this in config screen. 
+	// To make matters easier for myself (I did not expect a dynamic config screen), 
+	// and for readability (Venus has 23 marker files),
+	// fork out the marker list to a new list, launched from the config screen.
+
+	// Title
+	char mfdTitle[50];
+	sprintf(mfdTitle, "Markers");
+	Title(skp, mfdTitle); // Draws the MFD title
+
+	int textX0 = W / 80;
+	int textY0 = H / 20 * 2;
+	int dY = H / 16;
+	int secondRowIndent = 60;
+
+	char cbuf[100];
+	skp->SetFont(GetDefaultFont(1)); // Set to the correct font
+
+	int lineNumber = -currentMarkerTopListed;
+
+	char folderPath[100];
+	char refName[40];
+	oapiGetObjectName(ref, refName, 40);
+	sprintf(folderPath, "Config\\%s\\Marker", refName);
+	const int TOTAL_MARKERS_THIS_PLANET = 50;
+	char availableMarkers[TOTAL_MARKERS_THIS_PLANET][200]; // allow 50 markers. No name should be longer than 200 characters.
+	int markersInFolder = 0;
+
+	for (const auto& entry : fs::directory_iterator(folderPath))
+	{
+		std::string myString{ entry.path().u8string() };
+		char thisMarkerName[200];
+		sprintf(thisMarkerName, myString.c_str());
+
+		// Get marker name (without path [before \\] and extension [after .])
+		char* lastSlashPosWild = strchr(thisMarkerName, '\\');
+		char* lastSlashPos = "uwu"; // dank
+		while (lastSlashPosWild != NULL)
+		{
+			lastSlashPosWild = strchr(lastSlashPosWild + 1, '\\');
+			if (lastSlashPosWild != NULL) lastSlashPos = lastSlashPosWild; // save the value if actual position.
+		}
+
+		int pathLen = int(lastSlashPos - thisMarkerName);
+		char subThisMarkerName[100];
+		strcpy(subThisMarkerName, thisMarkerName + pathLen + 1); // "Config\\Earth\\Marker\\thisMarker.mkr", +pathLen removes "Config\\...\\Marker\\", where pathLen is length of path.
+		char* periodLoc;
+		periodLoc = strchr(subThisMarkerName, '.');
+
+		char actualName[100];
+		// Found a period
+		if (periodLoc != NULL)
+		{
+			myStrncpy(actualName, subThisMarkerName, periodLoc - subThisMarkerName); // "___.mkr"
+		}
+
+		// Print marker name
+		sprintf(cbuf, actualName);
+		skp->Text(textX0, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+		sprintf(cbuf, "DISABLED");
+		for (int i = 0; i < numMarkers; i++)
+		{
+			if (strcmp(thisMarkerName, enabledMarkers[i]) == 0)
+			{
+				sprintf(cbuf, "ENABLED");
+				break;
+			}
+		}
+		skp->Text(textX0 * secondRowIndent, textY0 + dY * lineNumber, cbuf, strlen(cbuf));
+		lineNumber++;
+
+		markersInFolder++;
+	}
+
+	// Create selection box
+	skp->SetPen(mainOrbitTrack); // re-use old pen.
+	skp->Rectangle(textX0 - 5, textY0 + (markerSelection - currentMarkerTopListed) * dY, W - textX0, textY0 + dY + (markerSelection - currentMarkerTopListed) * dY);
 }
 
 void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
@@ -2255,7 +2409,7 @@ void MapMFD::MakeMap(oapi::Sketchpad* skp, const char *refName, int *txtPos)
 	if (updateCache)
 	{
 		char filePath[100];
-		bool successfullyFoundVector = false;
+		//bool successfullyFoundVector = false;
 		sprintf(filePath, "%s\\Data\\coast.vec", refName);
 		FILEHANDLE vectorFile = oapiOpenFile(filePath, FILE_IN_ZEROONFAIL, CONFIG);
 		int fileMode = 0;
@@ -2281,7 +2435,7 @@ void MapMFD::MakeMap(oapi::Sketchpad* skp, const char *refName, int *txtPos)
 			mapExists = true;
 
 			// Other stuff
-			successfullyFoundVector = true;
+			//successfullyFoundVector = true;
 			char* line;
 
 			int lineNr = 0;
@@ -2543,6 +2697,137 @@ void MapMFD::MakeMap(oapi::Sketchpad* skp, const char *refName, int *txtPos)
 	*txtPos = textPos; // update counter
 }
 
+void MapMFD::MakeMarkers(oapi::Sketchpad* skp, const char* refName)
+{
+	skp->SetPen(markerPen[1]); // give a default marker (stock Map MFD defaults to 1)
+	skp->SetTextColor(DEFAULT_COLOURS.MARKER[1]); // give default colour
+	skp->SetTextAlign(); // default text alignement (left, top)
+
+	// As the marker file(s) are in the same config structure as the coast/contour map itself, we reuse much of the same code as in the MakeMap() function.
+
+	// Iterate over all files in Marker folder, using std::filesystem (https://stackoverflow.com/a/37494654).
+	// If file name is in EnabeledMarkers, then draw markers.
+
+
+	//if (__cplusplus == 201703L) sprintf(oapiDebugString(), "C++17");
+	//else if (__cplusplus == 201402L) sprintf(oapiDebugString(), "C++14"); // <-- we are here, so must use experimental folder library, as it's in C++17.
+	//else if (__cplusplus == 201103L) sprintf(oapiDebugString(), "C++11");
+	//else if (__cplusplus == 199711L) sprintf(oapiDebugString(), "C++98");
+	//else sprintf(oapiDebugString(), "Pre-standard C++");
+
+	char cbuf[200];
+
+	char folderPath[100];
+	sprintf(folderPath, "Config\\%s\\Marker", refName);
+	const int TOTAL_MARKERS_THIS_PLANET = 50;
+	char availableMarkers[TOTAL_MARKERS_THIS_PLANET][200]; // allow 50 markers. No name should be longer than 200 characters.
+	int markersInFolder = 0;
+
+	for (const auto& entry : fs::directory_iterator(folderPath))
+	{
+		std::string myString{ entry.path().u8string() };
+		sprintf(availableMarkers[markersInFolder], myString.c_str());
+		markersInFolder++;
+	}
+
+	int debugMarkersDisplaying = 0;
+	if (markersInFolder > TOTAL_MARKERS_THIS_PLANET)
+	{
+		sprintf(oapiDebugString(), "ERROR! Total %i markers, exceeds limit of %i. %.2f", markersInFolder, TOTAL_MARKERS_THIS_PLANET, oapiGetSimTime());
+	}
+	else if (markersInFolder > 0)
+	{
+		//sprintf(oapiDebugString(), "Marker folder %s. Marker files: %i, first <%s>", folderPath, markersInFolder, availableMarkers[0]);
+
+		// Go through all available markers, and check if they are in the ones selected to display.
+		for (int i = 0; i < markersInFolder; i++)
+		{
+			for (int j = 0; j < TOTAL_MARKERS_ALLOWED_TO_BE_ENABLED; j++)
+			{
+				if (strcmp(availableMarkers[i], enabledMarkers[j]) == 0) // we want to display one of the markers.
+				{
+					char* markerPath = availableMarkers[i] + 7; // +7 to remove "Config\", which is 7 characters.
+					FILEHANDLE markerFile = oapiOpenFile(markerPath, FILE_IN_ZEROONFAIL, CONFIG);
+					if (markerFile != 0) // could open marker file. Now read and draw.
+					{
+						int lineNr = 0;
+						int markersDrawn = 0;
+						char* line;
+
+						bool reading = true;
+						bool dataStarted = false; // file opens with comments and metadata, which we don't parse.
+
+						while (reading)
+						{
+							reading = oapiReadScenario_nextline(markerFile, line);
+							
+							if (!_strnicmp(line, "ColourIdx", 9))
+							{
+								int colourIdx = atoi(line + 9);
+
+								if (0 <= colourIdx && colourIdx <= 5) // valid number. 
+								{
+									skp->SetPen(markerPen[colourIdx]);
+									skp->SetTextColor(DEFAULT_COLOURS.MARKER[colourIdx]);
+								}
+							}
+							else if (strcmp(line, "BEGIN_DATA") == 0) dataStarted = true;
+							else if (dataStarted) // the lines after "BEGIN_DATA"
+							{
+								if (strlen(line) > 5) // line may be empty, so don't do anything
+								{
+									// Line has format "long   lat  : name"
+									double markerLong = atof(line) * RAD; // first comes longitude, which is in degrees, so convert to radians.
+									char* spaceLoc = strchr(line, ' ');
+									if (int(spaceLoc - line) > 14 || spaceLoc == NULL) // for some reason, some marker files use tabs, and some spaces. So if no early space is found, search for tabs. 15 is min length of a tab-input with spaces "+0.00\t+0.00\t:\tA A"
+									{
+										spaceLoc = strchr(line, '\t');
+									}
+
+									double markerLat = atof(line + int(spaceLoc - line + 1)) * RAD; // "  lat  : name"
+									char* colonLoc = strchr(line, ':');
+									char* markerLabel = line + int(colonLoc - line + 2); // "name"
+
+									int markerSize = 3;
+									if (centreZoom < 16) markerLabel = "";
+									if (centreZoom < 4) markerSize = 1;
+
+									DrawFeature(markerLong, markerLat, markerSize, RINGS, skp, markerLabel);
+									markersDrawn++;
+
+									if (debugInformation)
+									{
+										sprintf(cbuf, "<%s> %.1f, %.1f, <%s>", line, markerLong * DEG, markerLat * DEG, markerLabel);
+										skp->Text(120, 40 + markersDrawn * 30, cbuf, strlen(cbuf));
+									}
+								}
+							}
+
+
+							lineNr++;
+						}
+					}
+
+					oapiCloseFile(markerFile, FILE_IN_ZEROONFAIL); // close file
+
+					debugMarkersDisplaying++;
+					if (debugInformation)
+					{
+						sprintf(cbuf, "%iDraw marker %s, handle: %i", debugMarkersDisplaying, availableMarkers[i], int(markerFile));
+						skp->Text(80, 30 + 30 * debugMarkersDisplaying, cbuf, strlen(cbuf));
+					}
+					break; // no possibility that a marker is enabled twice, so stop innermost for loop, and go to next marker in folder.
+				}
+
+			}
+		}
+	}
+	else
+	{
+		//sprintf(oapiDebugString(), "Marker folder %s. No markers present!", folderPath);
+	}
+}
+
 void MapMFD::MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp)
 {
 	// Draw bases
@@ -2556,8 +2841,8 @@ void MapMFD::MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp)
 		oapiGetBaseEquPos(baseRef, &baseLongitude, &baseLatitude);
 		if (centreZoom >= 8)
 		{
-			char label[30];
-			oapiGetObjectName(baseRef, label, 30);
+			char label[50];
+			oapiGetObjectName(baseRef, label, 45);
 			DrawFeature(baseLongitude, baseLatitude, 3, BOX, skp, label);
 		}
 		else
@@ -2580,8 +2865,8 @@ void MapMFD::MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp)
 				GetObjectEquPos(vesselH, &objLong, &objLat, &objRad);
 
 				// Fetch object name
-				char nameString[20];
-				oapiGetObjectName(vesselH, nameString, 20);
+				char nameString[50];
+				oapiGetObjectName(vesselH, nameString, 45);
 
 				// Finally, draw current position, so that it's on top.
 				skp->SetPen(targetPosition);
@@ -2646,8 +2931,8 @@ void MapMFD::MakeTargets(oapi::Sketchpad* skp, double currentLong, double curren
 			DrawLine(previousLong, previousLat, firstLong, firstLat, skp);
 
 			// Fetch object name
-			char nameString[20];
-			oapiGetObjectName(targets[i], nameString, 20);
+			char nameString[50];
+			oapiGetObjectName(targets[i], nameString, 45);
 
 			// Finally, draw current position, so that it's on top.
 			skp->SetPen(targetPosition);
@@ -2974,6 +3259,19 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 		}
 	}
 
+	if (v->GroundContact() && v->GetSurfaceRef() == ref) // heading doesn't work for non-surface ref.
+	{
+		skp->SetPen(mainOrbitTrack);
+		//double headingLong, headingLat;
+		double heading;
+		oapiGetHeading(v->GetHandle(), &heading);
+		double headingDistance = 1000 / refRad; // 1 km long arrow
+		double headingLat = asin(sin(currentLat) * cos(headingDistance) + cos(currentLat) * sin(headingDistance) * cos(heading));
+		double headingLong = currentLong + atan2(sin(heading) * sin(headingDistance) * cos(currentLat), cos(headingDistance) - sin(currentLat) * sin(headingLat));
+
+		DrawLine(currentLong, currentLat, headingLong, headingLat, skp, false);
+	}
+
 	// Fianlly, draw current position, so that it's on top.
 	skp->SetPen(mainPosition);
 	skp->SetTextAlign(oapi::Sketchpad::LEFT, oapi::Sketchpad::BOTTOM);
@@ -3169,6 +3467,40 @@ bool MapMFD::ObjectAlreadyInTarget(OBJHANDLE hRef)
 	}
 
 	return false; // did not find
+}
+
+bool MapMFD::AddOrRemoveMarker(const char* fileName)
+{
+	bool markerObjectExists = false;
+	for (int i = 0; i < numMarkers; i++)
+	{
+		if (strcmp(fileName, enabledMarkers[i]) == 0) // we already have it enabled, so disable
+		{
+			sprintf(enabledMarkers[i], "");
+			markerObjectExists = true;
+		}
+		else if (markerObjectExists) // push the rest of the markers one step down
+		{
+			sprintf(enabledMarkers[i - 1], enabledMarkers[i]);
+		}
+	}
+
+	if (markerObjectExists) // we have found and disabled the marker
+	{
+		numMarkers -= 1; // reduce list count (do it here, as we must first iterate over all previous markers)
+		return true; // successfully removed file from markers!
+	}
+	else // we want to set it as a new marker
+	{
+		if (numMarkers < TOTAL_MARKERS_ALLOWED_TO_BE_ENABLED)
+		{
+			sprintf(enabledMarkers[numMarkers], fileName);
+			numMarkers += 1;
+			return true; // successsfully added file to markers!
+		}
+	}
+
+	return false; // probably have already full marker list
 }
 
 bool MapMFD::DrawLine(double long0, double lat0, double long1, double lat1, oapi::Sketchpad* skp, bool safetyCheck)
