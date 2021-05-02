@@ -1096,6 +1096,19 @@ bool MapMFD::SetTargetObject(char* rstr)
 				return true;
 			}
 
+			// If input x/X, set target to current coordinate.
+			if ((strchr(rstr, 'X') != NULL || strchr(rstr, 'x') != NULL) && strlen(rstr) == 1)
+			{
+				double radi, longi, lati;
+				GetObjectEquPos(v->GetHandle(), &longi, &lati, &radi);
+				targetCoord[numTargets][0] = longi * DEG;
+				targetCoord[numTargets][1] = lati * DEG;
+				targets[numTargets] = NULL;
+				numTargets += 1;
+
+				return true;
+			}
+
 			// Still nothing recognized. Set false.
 			return false;
 		}
@@ -3882,7 +3895,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		if (abs(latitude) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
 			theta = latitude / abs(latitude) * PI05; // set to sgn(lat) * PI05.
 		else
-			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(latitude)) / (2.0 + 2.0 * cos(2.0 * theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(latitude)) / (4.0 * cos(theta) * cos(theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
 
 		//A1 = 1.5553; // pol. factors
 		//A2 = -2.9641;
@@ -3902,7 +3915,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		if (abs(centreLat) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
 			theta = centreLat / abs(centreLat) * PI05; // set to sgn(lat) * PI05.
 		else
-			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(centreLat)) / (2.0 + 2.0 * cos(2.0 * theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(centreLat)) / (4.0 * cos(theta) * cos(theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
 		//
 		//// My own approximation of Mollweide to omit iteration. The whole problem is to solve 2*theta + sin(2*theta) = pi * sin(latitude) for theta
 		//k0 = abs(centreLat); // helping number to reduce abs calculations
