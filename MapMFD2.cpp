@@ -1566,7 +1566,7 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 
 	sprintf(cbuf, "Reset map pan");
 	skp->Text(textX0, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
-	sprintf(cbuf, "%.1f\u00B0N %.1f\u00B0E", centreLat * DEG, centreLong * DEG);
+	sprintf(cbuf, "%s", GetCoordinateString(centreLong, centreLat));
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGRESETMAP) * dY, cbuf, strlen(cbuf));
 
 	sprintf(cbuf, "Grid angle sep.");
@@ -1905,6 +1905,7 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 	case ROBINSON:
 	case EQUALEARTH:
 	case MOLLWEIDE:
+	case OBLIQUEMOLLWEIDE:
 	case HAMMER:
 	case LOXIMUTHAL:
 	case LASKOWSKI:
@@ -2334,6 +2335,7 @@ void MapMFD::MakeGridLines(oapi::Sketchpad* skp)
 	case ROBINSON:
 	case EQUALEARTH:
 	case MOLLWEIDE:
+	case OBLIQUEMOLLWEIDE:
 	case HAMMER:
 	case LOXIMUTHAL:
 	case LASKOWSKI:
@@ -3128,9 +3130,21 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 	ORBITPARAM prm;
 	//GetObjectRelativeElements(, el, &prm);
 	v->GetElements(ref, el, &prm, 0.0, FRAME_EQU);
+	if (el.e < 1.0) prm.MnA = posangle(prm.MnA); // for some reason, it can be negative, which messes up my calculations
+	//GetObjectRelativeElements(v->GetHandle(), el, &prm);
 
-	skp->SetPen(mainOrbitTrack);
-	DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // main orbit track
+	//skp->SetPen(mainOrbitTrack);
+	//DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // main orbit track
+	skp->SetPen(mainOrbitTrack); // attempted improvement of above thing
+	DrawOrbitTrack2(currentLong, currentLat, el, prm, skp, 0); // none
+	skp->SetPen(targetOrbitTrack); // attempted improvement of above thing
+	DrawOrbitTrack2(currentLong, currentLat, el, prm, skp, 1); // time frac
+	skp->SetPen(coastLines); // attempted improvement of above thing
+	DrawOrbitTrack2(currentLong, currentLat, el, prm, skp, 2); // TrA frac
+	//skp->SetPen(contourLines); // attempted improvement of above thing
+	//DrawOrbitTrack2(currentLong, currentLat, el, prm, skp, 3); // Kozai
+	skp->SetPen(terminatorLine); // attempted improvement of above thing
+	DrawOrbitTrack2(currentLong, currentLat, el, prm, skp, 4); // Sauer
 
 	// Draw marker for a pre-determined altitude. Useful if you want to know where you go below e.g. 60 km during reentry.
 	double radiusToDraw = drawSpecificAlt + refRad;
@@ -3738,6 +3752,149 @@ void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, 
 	}
 }
 
+
+void MapMFD::DrawOrbitTrack2(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp, int perturbation)
+{
+	// Plot the orbit track of a vessel
+	double futureLong, futureLat;
+	double previousLong = currentLong, previousLat = currentLat; // initialise to current pos, in case first step is below ground.
+
+	if (orbitTrackGround)
+	{
+		double timeLimit;
+		if (el.e > 1.0) timeLimit = 1e6; // orbit period not defined for hyperbolic orbit
+		else timeLimit = min(1e6, prm.T * orbitTrackOrbitsNumber); // 1e6 seconds equals 11.5 days.
+
+		double stepTrA = prm.TrA;
+		double time = 0.0;
+		const double angleDelta = orbitTrackAngleDelta * RAD;
+		const double maxTimeStep = oapiGetPlanetPeriod(ref) / maxPeriodFraction;
+
+		int debugCountOversteps = 0;
+
+		bool aboveSurface = true;
+		int n = 0;
+
+		while (aboveSurface && time < timeLimit && n < GROUND_TRACK_ITERATION_MAX_STEPS)
+		{
+			aboveSurface = GetEquPosInXSeconds2(time, el, prm, currentLong, &futureLong, &futureLat, perturbation);
+
+			if (n > 0 && aboveSurface) // must be above surface, as we don't want to draw a line of it falling inside the planet
+			{
+				DrawLine(previousLong, previousLat, futureLong, futureLat, skp);
+				//if (n < 10) // debug
+				//{
+				//	char cbuf[50];
+				//	sprintf(cbuf, "n%i t%.1f step%.2f\u00B0 TrA%.2f\u00B0 MnA%.2f\u00B0", n, time, stepTrA * DEG, prm.TrA * DEG, prm.MnA * DEG);
+				//	DrawFeature(futureLong, futureLat, 2, BOX, skp, cbuf);
+				//}
+
+				previousLong = futureLong;
+				previousLat = futureLat;
+			}
+
+			stepTrA += angleDelta;
+			double futureMnA = TrA2MnA(stepTrA, el.e);
+			if (el.e > 1.0) // hyperbolic
+			{
+				double meanMotion = sqrt(refMu / pow(-el.a, 3));
+				double desiredTime = (futureMnA - prm.MnA) / meanMotion;
+
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					time += maxTimeStep;
+
+					// And now set back stepTrA to what we have in time
+					futureMnA = time * meanMotion + prm.MnA;
+					stepTrA = MnA2TrA(futureMnA, el.e);
+
+					debugCountOversteps++;
+				}
+				else time = desiredTime;
+			}
+			else // elliptic
+			{
+				double meanMotion = PI2 / prm.T;
+				double desiredTime = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
+
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					time += maxTimeStep;
+
+					// And now set back stepTrA to what we have in time
+					futureMnA = time * meanMotion + prm.MnA;
+					double newSetTrA = posangle(MnA2TrA(futureMnA, el.e));
+					while (newSetTrA < stepTrA - PI05) newSetTrA += PI2;
+					stepTrA = newSetTrA;
+
+					debugCountOversteps++;
+				}
+				else time = desiredTime;
+			}
+
+			n++;
+		}
+
+		if (!aboveSurface)
+		{
+			DrawFeature(previousLong, previousLat, 3, BOX, skp, "");
+		}
+
+		if (debugInformation)
+		{
+			char debugLabel[100];
+			sprintf(debugLabel, "Oversteps: %i, time: %.1f", debugCountOversteps, time);
+			skp->Text(W / 2, H / 2 + 50, debugLabel, strlen(debugLabel)); // display info
+		}
+	}
+	else // orbit track plane mode
+	{
+		double firstLong = 0.0, firstLat = 0.0;
+		for (int k = 0; k < W; k++)
+		{
+			// Here follows a modification of GetEquPosInXSeconds, but with no nonspherical perturbions and no rotation of planet
+			double LAN = el.theta;
+			double APe = el.omegab - LAN;
+
+			// This method is partly from NTRS document 20160000809
+			double M0 = prm.MnA;
+			double M = M0;
+
+			// TrA in x seconds
+			double TrA = MnA2TrA(M, el.e);
+			TrA = fmod(TrA + PI2 * double(k) / double(W), PI2);
+			double TrA0 = MnA2TrA(M0, el.e);
+
+			double u = APe + TrA;
+			double u0 = APe + TrA0;
+			double alpha = atan2(cos(u) * sin(LAN) + sin(u) * cos(LAN) * cos(el.i), cos(u) * cos(LAN) - sin(u) * sin(LAN) * cos(el.i));
+			double alpha0 = atan2(cos(u0) * sin(LAN) + sin(u0) * cos(LAN) * cos(el.i), cos(u0) * cos(LAN) - sin(u0) * sin(LAN) * cos(el.i));
+			alpha -= alpha0;
+
+			double longi = alpha + currentLong;
+			longi = normangle(longi);
+
+			double lati = asin(sin(u) * sin(el.i));
+
+			if (k > 0)
+			{
+				DrawLine(previousLong, previousLat, longi, lati, skp);
+			}
+			else
+			{
+				firstLong = longi;
+				firstLat = lati;
+			}
+
+			previousLong = longi;
+			previousLat = lati;
+		}
+
+		// Connect the final and first points
+		DrawLine(firstLong, firstLat, previousLong, previousLat, skp);
+	}
+}
+
 bool MapMFD::TransformPoint(double longitude, double latitude, double* transformedLongitude, double* transformedLatitude, PROJECTION projection)
 {
 	double transLong, transLat;
@@ -3925,6 +4082,22 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLat -= sqrt(2.0) * sin(theta);
 
 		break;
+	case OBLIQUEMOLLWEIDE:
+		k0 = sin((latitude - centreLat) / 2.0) * sin((latitude - centreLat) / 2.0) + cos(centreLat) * cos(latitude) * sin(longitude / 2.0) * sin(longitude / 2.0); // a
+		A1 = 2.0 * atan2(sqrt(k0), sqrt(1.0 - k0)); // angdist
+		A2 = atan2(sin(longitude) * cos(latitude), cos(centreLat) * sin(latitude) - sin(centreLat) * cos(latitude) * cos(longitude)); // bearing
+		latitude = asin(sin(A1) * cos(A2));
+		longitude = atan2(sin(A2) * sin(A1), cos(A1));
+
+		theta = latitude - 0.2 * sin(latitude); // approximation for Newton's method, so that convergence is faster 
+		if (abs(latitude) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
+			theta = latitude / abs(latitude) * PI05; // set to sgn(lat) * PI05.
+		else
+			for (int i = 0; i < 2; i++) theta = theta - (2.0 * theta + sin(2.0 * theta) - PI * sin(latitude)) / (4.0 * cos(theta) * cos(theta)); // iterate to solve equation. Using 5 legs now. Slower convergence at poles.
+
+		transLong = 2.0 * sqrt(2.0) / PI * longitude * cos(theta);
+		transLat = sqrt(2.0) * sin(theta);
+		break;
 	case HAMMER:
 		// https://en.wikipedia.org/wiki/Hammer_projection
 		transLong = 2.0 * sqrt(2.0) * cos(latitude) * sin(longitude / 2.0) / sqrt(1.0 + cos(latitude) * cos(longitude / 2.0));
@@ -4098,6 +4271,104 @@ bool MapMFD::GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double c
 	else return false;
 }
 
+bool MapMFD::GetEquPosInXSeconds2(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude, int perturbation)
+{
+	double MnA;
+	if (el.e > 1.0) MnA = prm.MnA + sqrt(refMu / pow(-el.a, 3)) * t; // http://control.asu.edu/Classes/MAE462/462Lecture05.pdf page 17.
+	else MnA = prm.MnA + PI2 * t / prm.T;
+	double TrA = MnA2TrA(MnA, el.e);
+	double TrA0 = prm.TrA;
+
+	//if (t < 2.0) sprintf(oapiDebugString(), "TrA: %.2f\u00B0, MnA: %.2f\u00B0", TrA * DEG, MnA * DEG);
+	//if (TrA < TrA0 - 1e-8) sprintf(oapiDebugString(), "ERROR! TrA = %f\u00B0 < TrA0 = %f\u00B0. Time %.1f", TrA * DEG, TrA0 * DEG, t);
+
+	//if (el.e < 1.0) TrA = posangle(TrA) + floor((prm.MnA + PI2 * t / prm.T) / PI2) * PI2; // 
+
+	//double TrA0 = prm.TrA;
+
+	// sin(latitude at some time) = sin(el.i) * sin(APe + TrA at some time)
+	// i.e.
+	double LAN = el.theta;
+	double APe = el.omegab - LAN;
+	// This gives bullshit results for high eccentricity (also for suborbital flights), so I'll simply disable it.
+	if (v->NonsphericalGravityEnabled()) // Take J2 effects into consideration. Perturbs LAN and APe. But we only implement it for elliptical orbits, as I have no equation for orbits with no prm.T defined (i.e. hyperbolic orbits)
+	{
+		double J2 = oapiGetPlanetJCoeff(ref, 0); // 0 gives J2.
+		// "Default" fraction of orbital period:
+		if (perturbation == 1 && el.e < 1.0)
+		{
+			APe += 3.0 * PI2 / 4.0 * pow(refRad / el.a, 2.0) * (5.0 * cos(el.i) * cos(el.i) - 1.0) / pow(1.0 - el.e * el.e, 2.0) * J2 * t / prm.T;
+			LAN += -3.0 * PI2 / 2.0 * pow(refRad / el.a, 2.0) * cos(el.i) / pow(1.0 - el.e * el.e, 2.0) * J2 * t / prm.T;
+		}
+
+		// My adaptation with fraction of TrA
+		if (perturbation == 2)
+		{
+			double semiLatusRectum = el.a * (1.0 - el.e * el.e); // semi-latus rectum is also valid for hyperbolic orbits.
+			//double TrA0 = prm.TrA;
+			APe += 3.0 * PI2 / 4.0 * refRad * refRad / semiLatusRectum / semiLatusRectum * (5.0 * cos(el.i) * cos(el.i) - 1.0) * J2 * (TrA - TrA0) / PI2;
+			LAN += -3.0 / 2.0 * refRad * refRad / semiLatusRectum / semiLatusRectum * cos(el.i) * J2 * PI2 * (TrA - TrA0) / PI2;
+		}
+
+		// Kozai:
+		if (perturbation == 3)
+		{
+			double sin2i = sin(el.i) * sin(el.i);
+			double e2 = el.e * el.e;
+			double semiLatusRectum = el.a / refRad * (1.0 - e2);
+			double meanMotion = PI2 / prm.T;
+			double semi2 = semiLatusRectum * semiLatusRectum;
+
+			double dOmegaS = -J2 / semi2 * cos(el.i) * (TrA - MnA + el.e * sin(TrA) - 0.5 * sin(2.0 * (APe + TrA)) - el.e / 2.0 * sin(TrA + 2.0 * APe) - el.e / 6.0 * sin(3.0 * TrA + 2.0 * APe)); // unsure if TrA0 and MnA0 or for time t.
+			double meanCos2TrA = (-el.e / (1.0 + sqrt(1.0 - e2))) * (-el.e / (1.0 + sqrt(1.0 - e2))) * (1.0 + 2.0 * sqrt(1.0 - e2)); // (11)
+			double meanDOmegaS = -1.0 / 6.0 * J2 / semi2 * cos(el.i) * meanCos2TrA * cos(2.0 * APe); // (12)
+			double OmegaDot = -J2 / semi2 * meanMotion * cos(el.i) * (1.0 + J2 / semi2 * (1.5 + e2 / 6.0 - 2.0 * sqrt(1.0 - e2) - sin2i * (5.0 / 3.0 - 5.0 / 24.0 * e2 - 3.0 * sqrt(1.0 - e2))));
+			double dOmega1 = meanDOmegaS - J2 / semi2 * e2 * cos(el.i) / (2.0 * (4.0 - 5.0 * sin2i)) * ((7.0 - 15.0 * sin2i) / 6.0 + 5.0 * sin2i / (2.0 * (4.0 - 5.0 * sin2i)) * (14.0 - 15.0 * sin2i) / 6.0) * sin(2.0 * APe);
+			LAN += OmegaDot * t + dOmegaS - meanDOmegaS + dOmega1;
+
+			double domegaS = J2 / semi2 * ((2.0 - 2.5 * sin2i) * (TrA - MnA + el.e * sin(TrA)) \
+				+ (1.0 - 1.5 * sin2i) * (1.0 / el.e * (1.0 - 0.25 * el.e) * sin(TrA) + 0.5 * sin(2.0 * TrA) + el.e / 12.0 * sin(3.0 * TrA)) \
+				- 1.0 / el.e * (0.25 * sin2i + (0.5 - 15.0 / 16.0 * sin2i) * e2) * sin(TrA + 2.0 * APe) + el.e / 16.0 * sin2i * sin(TrA - 2.0 * APe) \
+				- 0.5 * (1.0 - 2.5 * sin2i) * sin(2.0 * (TrA + APe)) + 1.0 / el.e * (7.0 / 12.0 * sin2i - 1.0 / 6.0 * (1.0 - 19.0 / 8.0 * sin2i) * e2) * sin(3.0 * TrA + 2.0 * APe) \
+				+ 3.0 / 8.0 * sin2i * sin(4.0 * TrA + 2.0 * APe) + el.e / 16.0 * sin2i * sin(5.0 * TrA + 2.0 * APe));
+			double meanDomegaS = J2 / semi2 * (sin2i * (0.125 + (1.0 - e2) / 6.0 / e2 * meanCos2TrA) + 1.0 / 6.0 * cos(el.i) * cos(el.i) * meanCos2TrA) * sin(2.0 * APe);
+			double omegaDot = J2 / semi2 * meanMotion * (2.0 - 2.5 * sin2i) * (1.0 + J2 / semi2 * (2.0 + e2 / 2.0 - 2.0 * sqrt(1.0 - e2) - sin2i * (43.0 / 24.0 - e2 / 48.0 - 3.0 * sqrt(1.0 - e2)))) - 5.0 / 12.0 * J2 * J2 / semi2 / semi2 * e2 * meanMotion * pow(cos(el.i), 4); // (28)
+			double domega1 = meanDomegaS - 3.0 / 8.0 * J2 / semi2 * sin2i * sin(2.0 * APe) - J2 / semi2 * (1.0 / (4.0 - 5.0 * sin2i) * ((14.0 - 15.0 * sin2i) / 24.0 * sin2i - e2 * (28.0 - 158.0 * sin2i + 135.0 * sin2i * sin2i) / 48.0) - e2 * sin2i * (13.0 - 15.0 * sin2i) / (4.0 - 5.0 * sin2i) / (4.0 - 5.0 * sin2i) * (14.0 - 15.0 * sin2i) / 24.0) * sin(2.0 * APe); // (30)
+			APe += omegaDot * t + domegaS - meanDomegaS + domega1; // (31)
+		}
+
+		// Sauer:
+		if (perturbation == 4)
+		{
+			double LANangleDiff = 6.0 * (TrA + el.e * sin(TrA)) - (3.0 * el.e * sin(2.0 * APe + TrA) + 3.0 * sin(2.0 * APe + 2.0 * TrA) + el.e * sin(2.0 * APe + 3.0 * TrA));
+			LANangleDiff -= 6.0 * (TrA0 + el.e * sin(TrA0)) - (3.0 * el.e * sin(2.0 * APe + TrA0) + 3.0 * sin(2.0 * APe + 2.0 * TrA0) + el.e * sin(2.0 * APe + 3.0 * TrA0));
+			double DeltaLAN = -J2 * cos(el.i) / 4.0 / pow(el.a / refRad * (1.0 - el.e * el.e), 2) * LANangleDiff; // we'll use this in the APe perturbation
+			LAN += DeltaLAN;
+
+			double APeAngleDiff = (1.0 - 1.5 * sin(el.i) * sin(el.i)) * (TrA + (4.0 + 3.0 * el.e * el.e) / (4.0 * el.e) * sin(TrA) + 0.5 * sin(2.0 * TrA) + el.e / 12.0 * sin(3.0 * TrA)) \
+				- sin(el.i) * sin(el.i) / (48.0 * el.e) * (3.0 * el.e * el.e * sin(2.0 * APe - TrA) + (12.0 - 21.0 * el.e * el.e) * sin(2.0 * APe + TrA) - 36.0 * el.e * sin(2.0 * APe + 2.0 * TrA) \
+					- (28.0 + 11.0 * el.e * el.e) * sin(2.0 * APe + 3.0 * TrA) - 18.0 * el.e * sin(2.0 * APe + 4.0 * TrA) - 3.0 * el.e * sin(2.0 * APe + 5.0 * TrA));
+			APeAngleDiff -= (1.0 - 1.5 * sin(el.i) * sin(el.i)) * (TrA0 + (4.0 + 3.0 * el.e * el.e) / (4.0 * el.e) * sin(TrA0) + 0.5 * sin(2.0 * TrA0) + el.e / 12.0 * sin(3.0 * TrA0)) \
+				- sin(el.i) * sin(el.i) / (48.0 * el.e) * (3.0 * el.e * el.e * sin(2.0 * APe - TrA0) + (12.0 - 21.0 * el.e * el.e) * sin(2.0 * APe + TrA0) - 36.0 * el.e * sin(2.0 * APe + 2.0 * TrA0) \
+					- (28.0 + 11.0 * el.e * el.e) * sin(2.0 * APe + 3.0 * TrA0) - 18.0 * el.e * sin(2.0 * APe + 4.0 * TrA0) - 3.0 * el.e * sin(2.0 * APe + 5.0 * TrA0));
+			APe += J2 * 3.0 / 2.0 / pow(el.a / refRad * (1.0 - el.e * el.e), 2) * APeAngleDiff - cos(el.i) * DeltaLAN;
+		}
+	}
+
+	*latitude = asin(sin(el.i) * sin(APe + TrA));
+
+	//double deltaLambdaN1 = atan(sin(currentLatitude) * tan(asin(cos(el.i) / cos(currentLatitude))));
+	//double lambdaNref = currentLongitude - deltaLambdaN1; // longitude of reference node
+	double lambdaNref = LAN - oapiGetPlanetCurrentRotation(ref);
+
+	double deltaLambdaNS = atan2(cos(el.i) * sin(APe + TrA), cos(APe + TrA));
+	*longitude = normangle(lambdaNref - PI2 / oapiGetPlanetPeriod(ref) * t + deltaLambdaNS);
+
+	double orbitRad = el.a * (1.0 - el.e * el.e) / (1.0 + el.e * cos(TrA));
+	if (orbitRad > refRad) return true;
+	else return false;
+}
+
 void MapMFD::GetObjectEquPos(OBJHANDLE tgt, double* longitude, double* latitude, double *radius)
 {
 	VECTOR3 tgtPos;
@@ -4157,6 +4428,7 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 	double period = PI2 * sqrt(pow(SMa, 3) / refMu);
 	double MnA = eccentricAnomaly - eccentricity * sin(eccentricAnomaly);
 	if (eccentricity > 1.0) MnA = eccentricity * sinh(eccentricAnomaly) - eccentricAnomaly;
+	//else MnA = posangle(MnA); // if elliptical orbit, make it a posangle. This simplifies calculations later on.
 
 	el.a = SMa;
 	el.e = eccentricity;
@@ -4190,6 +4462,8 @@ inline double MapMFD::MnA2TrA(double MnA, double Ecc)
 	// Old Taylor series diverges for high eccentricities. Instead, we now first convert from MnA to EccAnomaly (using Newton's method), and then analytical conversion to TrA
 	// While old Taylor required an Ecc < 0.4, the new method requires Ecc < 0.98, so much much better.
 
+	const double precision = 1e-8;
+
 	// And for hyperbolic orbits, we are now featuring another method, using the hyperbolic orbit equations.
 	if (Ecc < 1.0)
 	{
@@ -4203,12 +4477,14 @@ inline double MapMFD::MnA2TrA(double MnA, double Ecc)
 			EccAnom -= (EccAnom - Ecc * sin(EccAnom) - MnA) / (1.0 - Ecc * cos(EccAnom));
 			i++;
 
-			if (abs(EccAnom - previousResult) < 1e-8) break; // Converged
+			if (abs(EccAnom - previousResult) < precision) break; // Converged
 
 			previousResult = EccAnom;
 		}
 
 		double TrA = 2.0 * atan(sqrt((1.0 + Ecc) / (1.0 - Ecc)) * tan(EccAnom / 2.0));
+
+		TrA += (floor(MnA / PI2) - floor(TrA / PI2)) * PI2; // return same period as MnA
 
 		return TrA;
 	}
@@ -4226,7 +4502,7 @@ inline double MapMFD::MnA2TrA(double MnA, double Ecc)
 			HypAnom -= (HypAnom + MnA - Ecc * sinh(HypAnom)) / (1.0 - Ecc * cosh(HypAnom));
 			i++;
 
-			if (abs(HypAnom - previousResult) < 1e-8) break; // Converged
+			if (abs(HypAnom - previousResult) < precision) break; // Converged
 
 			previousResult = HypAnom;
 		}

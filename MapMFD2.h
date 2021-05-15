@@ -10,7 +10,7 @@ For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 */
 // NEW: VANDERGRINTEN, HAMMER, GALLPETERS, HOBODYER, STEREOGRAPHIC, GNOMONIC, BERGHAUSSTAR, LASKOWSKI, LOXIMUTHAL, ROBINSON.
 //enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, AITOFF, HAMMER, LOXIMUTHAL, LASKOWSKI, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GNOMONIC, BERGHAUSSTAR, CASSINI, GALLPETERS, HOBODYER, LASTENTRYPROJECTION };
-enum PROJECTION { EQUIRECTANGULAR, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, HAMMER, LOXIMUTHAL, LASKOWSKI, WINKELTRIPEL, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GALLPETERS, LASTENTRYPROJECTION };
+enum PROJECTION { EQUIRECTANGULAR, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, OBLIQUEMOLLWEIDE, HAMMER, LOXIMUTHAL, LASKOWSKI, WINKELTRIPEL, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GALLPETERS, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
 enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGMARKERS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
@@ -115,12 +115,14 @@ public:
 	bool DrawLine(double long0, double lat0, double long1, double lat1, oapi::Sketchpad* skp, bool safetyCheck = true);
 	bool DrawFeature(double longitude, double latitude, int size, MAPFEATURE feature, oapi::Sketchpad* skp, char *label);
 	void DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp);
+	void DrawOrbitTrack2(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp, int perturbation); // attempted improvement of above function.
 
 	bool TransformPoint(double longitude, double latitude, double *transformedLongitude, double *transformedLatitude, PROJECTION projection);
 	//char* GetProjectionName(void);
 	char* GetCoordinateString(double longitude, double latitude);
 
 	bool GetEquPosInXSeconds(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude); // return false if altitude below surface
+	bool GetEquPosInXSeconds2(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude, int perturbation); // attempted improvement of above function.
 	void GetObjectEquPos(OBJHANDLE tgt, double* longitude, double* latitude, double *radius);
 	void GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* prm);
 
@@ -605,6 +607,8 @@ char* GetSpecificProjectionName(int proj)
 		return "Equal Earth";
 	case MOLLWEIDE:
 		return "Mollweide";
+	case OBLIQUEMOLLWEIDE:
+		return "Oblique Mollweide";
 	case HAMMER:
 		return "Hammer";
 	case LOXIMUTHAL:
