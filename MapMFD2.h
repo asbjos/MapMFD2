@@ -12,7 +12,7 @@ For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 //enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, AITOFF, HAMMER, LOXIMUTHAL, LASKOWSKI, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GNOMONIC, BERGHAUSSTAR, CASSINI, GALLPETERS, HOBODYER, LASTENTRYPROJECTION };
 enum PROJECTION { EQUIRECTANGULAR, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, HAMMER, LOXIMUTHAL, LASKOWSKI, WINKELTRIPEL, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GALLPETERS, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
-enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGMARKERS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
+enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGNUMERICVSANALYTIC, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGMARKERS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
 enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1}; // set EXPANDNONE to -1, so that we can do a >= 0 check to see if something is expanded
 
@@ -39,6 +39,7 @@ struct
 	bool SHOW_VESSELS = false;
 	bool SHOW_HISTORY = true;
 	double DRAW_SPECIFIC_ALT = 0.0; // off
+	bool GROUNDTRACK_NUMERIC = true;
 	int BLOCK_PROJECTIONS[int(LASTENTRYPROJECTION)]; // list of projection indices to block, initialise to block none (index -1 does not exist).
 } DEFAULT_VALUES;
 
@@ -114,7 +115,7 @@ public:
 
 	bool DrawLine(double long0, double lat0, double long1, double lat1, oapi::Sketchpad* skp, bool safetyCheck = true);
 	bool DrawFeature(double longitude, double latitude, int size, MAPFEATURE feature, oapi::Sketchpad* skp, char *label);
-	//void DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp);
+	void DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp);
 	void DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp); // attempted improvement of above function.
 
 	bool TransformPoint(double longitude, double latitude, double *transformedLongitude, double *transformedLatitude, PROJECTION projection);
@@ -208,6 +209,12 @@ private:
 
 	bool showVessels = DEFAULT_VALUES.SHOW_VESSELS;
 	bool showHistory = DEFAULT_VALUES.SHOW_HISTORY;
+
+	bool groundtrackNumeric = DEFAULT_VALUES.GROUNDTRACK_NUMERIC; // allow user to switch between numeric and analytic ground track calculation. \
+	Analytic breaks down for eccentricity close to 0.0 or close to 1.0. \
+	Analytic lacks J2 non-spherical term implementation, although the J2 in numeric still doesn't perfectly predict even in LEO. \
+	Ap/Pe and altitude points are calculated analytically, so especially with non-spheircal gravity enabled, the points may not line up with ground track if in numeric mode. \
+	Performance should be roughly similar. Maybe numeric is slightly faster, due to less trigonometric calculation.
 
 	float cacheMap[100000][2];
 	bool updateCache = true; // never change this other than when caching or changing reference. If memory is lost, the update call is also reactivated.
@@ -678,6 +685,7 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	oapiReadItem_bool(cfgFile, "DefShowOtherVessels", DEFAULT_VALUES.SHOW_VESSELS);
 	oapiReadItem_bool(cfgFile, "DefShowHistoryTrack", DEFAULT_VALUES.SHOW_HISTORY);
 	oapiReadItem_float(cfgFile, "DefDrawSpecificAltitude", DEFAULT_VALUES.DRAW_SPECIFIC_ALT);
+	oapiReadItem_bool(cfgFile, "DefGroundtrackNumeric", DEFAULT_VALUES.GROUNDTRACK_NUMERIC);
 
 	// Logic for disabling specific projections
 	char blockProjections[200];

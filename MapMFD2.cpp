@@ -321,6 +321,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGMAPAUTOSIZE:
 				defaultMapLinesAmount = (defaultMapLinesAmount % 10000) + 1000; // allow up to 1e4 lines, and at least 1e3
 				break;
+			case CONFIGNUMERICVSANALYTIC:
+				groundtrackNumeric = !groundtrackNumeric; // either numeric or analytic ground track
+				break;
 			case CONFIGTRACKANGLEDELTA:
 				// Valid values are 0.01, 0.05, 0.1, 0.5, 1.0
 				if (orbitTrackAngleDelta == 0.1) orbitTrackAngleDelta = 0.5;
@@ -405,6 +408,8 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGMAPAUTOSIZE:
 				defaultMapLinesAmount = 5000;
 				break;
+			case CONFIGNUMERICVSANALYTIC:
+				groundtrackNumeric = true;
 			case CONFIGTRACKANGLEDELTA:
 				orbitTrackAngleDelta = 0.1;
 				break;
@@ -1591,6 +1596,13 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	sprintf(cbuf, "%i", defaultMapLinesAmount);
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGMAPAUTOSIZE) * dY, cbuf, strlen(cbuf));
 	if (!autoResolution) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
+	sprintf(cbuf, "Ground track calculation");
+	skp->Text(textX0, textY0 + int(CONFIGNUMERICVSANALYTIC) * dY, cbuf, strlen(cbuf));
+	groundtrackNumeric ? sprintf(cbuf, "NUMERICAL") : sprintf(cbuf, "ANALYTICAL");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGNUMERICVSANALYTIC) * dY, cbuf, strlen(cbuf));
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
 
 	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
 	sprintf(cbuf, "Orbit track time step");
@@ -2915,9 +2927,9 @@ void MapMFD::MakeTargets(oapi::Sketchpad* skp, double currentLong, double curren
 			double currentLongTarget, currentLatTarget, currentRadTarget;
 			GetObjectEquPos(targets[i], &currentLongTarget, &currentLatTarget, &currentRadTarget);
 
-			skp->SetPen(targetOrbitTrack);
-			DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp);
-			//DrawOrbitTrack(currentLongTarget, currentLatTarget, el, prm, skp); // target orbit track
+			skp->SetPen(targetOrbitTrack); // target orbit track
+			if (groundtrackNumeric) DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp);
+			else DrawOrbitTrackAnalytic(currentLongTarget, currentLatTarget, el, prm, skp);
 
 			// Draw circle of "viewable content", i.e. "what portion of the planet is in view?".
 			// Calculate the angular viewable area, and calculate points for all different bearings. From https://www.movable-type.co.uk/scripts/latlong.html
@@ -3155,7 +3167,8 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 	//skp->SetPen(targetOrbitTrack); // attempted improvement of above thing
 	//DrawOrbitTrack2(statePos, stateVel, el, prm, skp, 0); // RK4 spherical
 	//skp->SetPen(coastLines); // attempted improvement of above thing
-	DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp); // RK4 J2
+	if (groundtrackNumeric) DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp); // RK4 J2
+	else DrawOrbitTrackAnalytic(currentLong, currentLat, el, prm, skp); // analytical
 	//OBJHANDLE thirdBody = oapiGetGbodyByName("Sun");
 	//VECTOR3 thirdBodyPos;
 	//oapiGetRelativePos(thirdBody, ref, &thirdBodyPos);
@@ -3637,151 +3650,152 @@ bool MapMFD::DrawFeature(double longitude, double latitude, int size, MAPFEATURE
 	return false;
 }
 
-//void MapMFD::DrawOrbitTrack(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp)
-//{
-//	// Plot the orbit track of a vessel
-//	double futureLong, futureLat;
-//	double previousLong = currentLong, previousLat = currentLat; // initialise to current pos, in case first step is below ground.
-//
-//	if (orbitTrackGround)
-//	{
-//		double timeLimit;
-//		if (el.e > 1.0) timeLimit = 1e6; // orbit period not defined for hyperbolic orbit
-//		else timeLimit = min(1e6, prm.T * orbitTrackOrbitsNumber); // 1e6 seconds equals 11.5 days.
-//
-//		double stepTrA = prm.TrA;
-//		double time = 0.0;
-//		const double angleDelta = orbitTrackAngleDelta * RAD;
-//		const double maxTimeStep = oapiGetPlanetPeriod(ref) / maxPeriodFraction;
-//
-//		int debugCountOversteps = 0;
-//
-//		bool aboveSurface = true;
-//		int n = 0;
-//
-//		while (aboveSurface && time < timeLimit && n < GROUND_TRACK_ITERATION_MAX_STEPS)
-//		{
-//			aboveSurface = GetEquPosInXSeconds(time, el, prm, &futureLong, &futureLat);
-//
-//			if (n > 0 && aboveSurface) // must be above surface, as we don't want to draw a line of it falling inside the planet
-//			{
-//				DrawLine(previousLong, previousLat, futureLong, futureLat, skp);
-//
-//				previousLong = futureLong;
-//				previousLat = futureLat;
-//			}
-//
-//			stepTrA += angleDelta;
-//			double futureMnA = TrA2MnA(stepTrA, el.e);
-//			if (el.e > 1.0) // hyperbolic
-//			{
-//				double meanMotion = sqrt(refMu / pow(-el.a, 3));
-//				double desiredTime = (futureMnA - prm.MnA) / meanMotion;
-//
-//				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
-//				{
-//					time += maxTimeStep;
-//
-//					// And now set back stepTrA to what we have in time
-//					futureMnA = time * meanMotion + prm.MnA;
-//					stepTrA = MnA2TrA(futureMnA, el.e);
-//
-//					debugCountOversteps++;
-//				}
-//				else time = desiredTime;
-//			}
-//			else // elliptic
-//			{
-//				double meanMotion = PI2 / prm.T;
-//				double desiredTime = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
-//				
-//				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
-//				{
-//					time += maxTimeStep;
-//
-//					// And now set back stepTrA to what we have in time
-//					futureMnA = time * meanMotion + prm.MnA;
-//					double newSetTrA = posangle(MnA2TrA(futureMnA, el.e));
-//					while (newSetTrA < stepTrA - PI05) newSetTrA += PI2;
-//					stepTrA = newSetTrA;
-//
-//					debugCountOversteps++;
-//				}
-//				else time = desiredTime;
-//			}
-//
-//			n++;
-//		}
-//
-//		if (!aboveSurface)
-//		{
-//			DrawFeature(previousLong, previousLat, 3, BOX, skp, "");
-//		}
-//
-//		if (debugInformation)
-//		{
-//			char debugLabel[100];
-//			sprintf(debugLabel, "Oversteps: %i, time: %.1f", debugCountOversteps, time);
-//			skp->Text(W / 2, H / 2 + 50, debugLabel, strlen(debugLabel)); // display info
-//		}
-//	}
-//	else // orbit track plane mode
-//	{
-//		double firstLong = 0.0, firstLat = 0.0;
-//		for (int k = 0; k < W; k++)
-//		{
-//			// Here follows a modification of GetEquPosInXSeconds, but with no nonspherical perturbions and no rotation of planet
-//			double LAN = el.theta;
-//			double APe = el.omegab - LAN;
-//
-//			// This method is partly from NTRS document 20160000809
-//			double M0 = prm.MnA;
-//			double M = M0;
-//
-//			// TrA in x seconds
-//			double TrA = MnA2TrA(M, el.e);
-//			TrA = fmod(TrA + PI2 * double(k) / double(W), PI2);
-//			//double TrA0 = MnA2TrA(M0, el.e);
-//
-//
-//			double lati = asin(sin(el.i) * sin(APe + TrA));
-//
-//			double currentLongitudeOfAscencion = LAN - oapiGetPlanetCurrentRotation(ref);
-//
-//			double angleFromAscendingNode = atan2(cos(el.i) * sin(APe + TrA), cos(APe + TrA));
-//			double longi = normangle(currentLongitudeOfAscencion + angleFromAscendingNode);
-//
-//
-//
-//			//double u = APe + TrA;
-//			//double u0 = APe + TrA0;
-//			//double alpha = atan2(cos(u) * sin(LAN) + sin(u) * cos(LAN) * cos(el.i), cos(u) * cos(LAN) - sin(u) * sin(LAN) * cos(el.i));
-//			//double alpha0 = atan2(cos(u0) * sin(LAN) + sin(u0) * cos(LAN) * cos(el.i), cos(u0) * cos(LAN) - sin(u0) * sin(LAN) * cos(el.i));
-//			//alpha -= alpha0;
-//
-//			//double longi = alpha + currentLong;
-//			//longi = normangle(longi);
-//
-//			//double lati = asin(sin(u) * sin(el.i));
-//
-//			if (k > 0)
-//			{
-//				DrawLine(previousLong, previousLat, longi, lati, skp);
-//			}
-//			else
-//			{
-//				firstLong = longi;
-//				firstLat = lati;
-//			}
-//
-//			previousLong = longi;
-//			previousLat = lati;
-//		}
-//
-//		// Connect the final and first points
-//		DrawLine(firstLong, firstLat, previousLong, previousLat, skp);
-//	}
-//}
+// Keep analytic in, so that user can decide which solution to use.
+void MapMFD::DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp)
+{
+	// Plot the orbit track of a vessel
+	double futureLong, futureLat;
+	double previousLong = currentLong, previousLat = currentLat; // initialise to current pos, in case first step is below ground.
+
+	if (orbitTrackGround)
+	{
+		double timeLimit;
+		if (el.e > 1.0) timeLimit = 1e6; // orbit period not defined for hyperbolic orbit
+		else timeLimit = min(1e6, prm.T * orbitTrackOrbitsNumber); // 1e6 seconds equals 11.5 days.
+
+		double stepTrA = prm.TrA;
+		double time = 0.0;
+		const double angleDelta = orbitTrackAngleDelta * RAD;
+		const double maxTimeStep = oapiGetPlanetPeriod(ref) / maxPeriodFraction;
+
+		int debugCountOversteps = 0;
+
+		bool aboveSurface = true;
+		int n = 0;
+
+		while (aboveSurface && time < timeLimit && n < GROUND_TRACK_ITERATION_MAX_STEPS)
+		{
+			aboveSurface = GetEquPosInXSecondsAnalytical(time, el, prm, &futureLong, &futureLat);
+
+			if (n > 0 && aboveSurface) // must be above surface, as we don't want to draw a line of it falling inside the planet
+			{
+				DrawLine(previousLong, previousLat, futureLong, futureLat, skp);
+
+				previousLong = futureLong;
+				previousLat = futureLat;
+			}
+
+			stepTrA += angleDelta;
+			double futureMnA = TrA2MnA(stepTrA, el.e);
+			if (el.e > 1.0) // hyperbolic
+			{
+				double meanMotion = sqrt(refMu / pow(-el.a, 3));
+				double desiredTime = (futureMnA - prm.MnA) / meanMotion;
+
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					time += maxTimeStep;
+
+					// And now set back stepTrA to what we have in time
+					futureMnA = time * meanMotion + prm.MnA;
+					stepTrA = MnA2TrA(futureMnA, el.e);
+
+					debugCountOversteps++;
+				}
+				else time = desiredTime;
+			}
+			else // elliptic
+			{
+				double meanMotion = PI2 / prm.T;
+				double desiredTime = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
+				
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					time += maxTimeStep;
+
+					// And now set back stepTrA to what we have in time
+					futureMnA = time * meanMotion + prm.MnA;
+					double newSetTrA = posangle(MnA2TrA(futureMnA, el.e));
+					while (newSetTrA < stepTrA - PI05) newSetTrA += PI2;
+					stepTrA = newSetTrA;
+
+					debugCountOversteps++;
+				}
+				else time = desiredTime;
+			}
+
+			n++;
+		}
+
+		if (!aboveSurface)
+		{
+			DrawFeature(previousLong, previousLat, 3, BOX, skp, "");
+		}
+
+		if (debugInformation)
+		{
+			char debugLabel[100];
+			sprintf(debugLabel, "Oversteps: %i, time: %.1f", debugCountOversteps, time);
+			skp->Text(W / 2, H / 2 + 50, debugLabel, strlen(debugLabel)); // display info
+		}
+	}
+	else // orbit track plane mode
+	{
+		double firstLong = 0.0, firstLat = 0.0;
+		for (int k = 0; k < W; k++)
+		{
+			// Here follows a modification of GetEquPosInXSeconds, but with no nonspherical perturbions and no rotation of planet
+			double LAN = el.theta;
+			double APe = el.omegab - LAN;
+
+			// This method is partly from NTRS document 20160000809
+			double M0 = prm.MnA;
+			double M = M0;
+
+			// TrA in x seconds
+			double TrA = MnA2TrA(M, el.e);
+			TrA = fmod(TrA + PI2 * double(k) / double(W), PI2);
+			//double TrA0 = MnA2TrA(M0, el.e);
+
+
+			double lati = asin(sin(el.i) * sin(APe + TrA));
+
+			double currentLongitudeOfAscencion = LAN - oapiGetPlanetCurrentRotation(ref);
+
+			double angleFromAscendingNode = atan2(cos(el.i) * sin(APe + TrA), cos(APe + TrA));
+			double longi = normangle(currentLongitudeOfAscencion + angleFromAscendingNode);
+
+
+
+			//double u = APe + TrA;
+			//double u0 = APe + TrA0;
+			//double alpha = atan2(cos(u) * sin(LAN) + sin(u) * cos(LAN) * cos(el.i), cos(u) * cos(LAN) - sin(u) * sin(LAN) * cos(el.i));
+			//double alpha0 = atan2(cos(u0) * sin(LAN) + sin(u0) * cos(LAN) * cos(el.i), cos(u0) * cos(LAN) - sin(u0) * sin(LAN) * cos(el.i));
+			//alpha -= alpha0;
+
+			//double longi = alpha + currentLong;
+			//longi = normangle(longi);
+
+			//double lati = asin(sin(u) * sin(el.i));
+
+			if (k > 0)
+			{
+				DrawLine(previousLong, previousLat, longi, lati, skp);
+			}
+			else
+			{
+				firstLong = longi;
+				firstLat = lati;
+			}
+
+			previousLong = longi;
+			previousLat = lati;
+		}
+
+		// Connect the final and first points
+		DrawLine(firstLong, firstLat, previousLong, previousLat, skp);
+	}
+}
 
 
 void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp)
