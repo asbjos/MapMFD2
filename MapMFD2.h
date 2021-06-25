@@ -23,6 +23,7 @@ static char MFD_NAME[10] = "Map2";
 const int COLOUR_BIT_DEPTH = 256; // we have 256 shades from red to green. Declared as constant for better readability.
 const int TOTAL_MARKERS_ALLOWED_TO_BE_ENABLED = 50;
 const int TOTAL_MARKERS_PER_PLANET = 50;
+const int MAX_MOONS_PER_BODY = 20; // the number of moons for a body in the ref/target list.
 
 struct
 {
@@ -70,9 +71,9 @@ typedef struct ReferenceObjectType {
 
 	// Now supporting up to 20 moons
 	int moonCount = 0;
-	OBJHANDLE moonHandle[20];
-	int moonIndex[20];
-	char moonName[20][20]; // 20 moons, 20 chars each
+	OBJHANDLE moonHandle[MAX_MOONS_PER_BODY];
+	int moonIndex[MAX_MOONS_PER_BODY];
+	char moonName[MAX_MOONS_PER_BODY][20]; // 20 moons, 20 chars each
 } PLANET;
 
 class MapMFD : public MFD2

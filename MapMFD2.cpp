@@ -1306,6 +1306,7 @@ void MapMFD::RecallStatus()
 	else if (resetCommand)
 	{
 		resetCommand = false; // Set back to default, after we've flushed the MFD.
+		debugInformation = false; // we have set to reset, so also turn off debug info. It is static, and therefore not affected by Recall/Store status. So we must reset it manually.
 	}
 }
 
@@ -3163,12 +3164,13 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 	//skp->SetPen(mainOrbitTrack);
 	//DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // main orbit track
 	skp->SetPen(mainOrbitTrack); // attempted improvement of above thing
-	//DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // analytical
-	//skp->SetPen(targetOrbitTrack); // attempted improvement of above thing
-	//DrawOrbitTrack2(statePos, stateVel, el, prm, skp, 0); // RK4 spherical
-	//skp->SetPen(coastLines); // attempted improvement of above thing
 	if (groundtrackNumeric) DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp); // RK4 J2
 	else DrawOrbitTrackAnalytic(currentLong, currentLat, el, prm, skp); // analytical
+	//DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // analytical
+	//skp->SetPen(targetOrbitTrack); // attempted improvement of above thing
+	//DrawOrbitTrackAnalytic(currentLong, currentLat, el, prm, skp); // analytical
+	//DrawOrbitTrack2(statePos, stateVel, el, prm, skp, 0); // RK4 spherical
+	//skp->SetPen(coastLines); // attempted improvement of above thing
 	//OBJHANDLE thirdBody = oapiGetGbodyByName("Sun");
 	//VECTOR3 thirdBodyPos;
 	//oapiGetRelativePos(thirdBody, ref, &thirdBodyPos);
@@ -3704,6 +3706,26 @@ void MapMFD::DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEME
 				}
 				else time = desiredTime;
 			}
+			else if (el.e < 0.02) // close to circular
+			{
+				// For the next time, we normally use the TrA to adjust for parts of orbit where we are moving fast/slow.
+				// But TrA breaks down for circular orbits, so then assume equal time steps.
+
+				// As an orbit has constant eccentricity, we actually never get to use stepTrA, so don't worry about it falling behind.
+				// But still check for the maxTimeStep limit, which can happen for circular orbits with high altitude.
+				double timeStep = prm.T * angleDelta / PI2; // want this step
+				double desiredTime = time + timeStep;
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					timeStep = maxTimeStep;
+					time += maxTimeStep;
+					debugCountOversteps++;
+				}
+				else
+				{
+					time += timeStep;
+				}
+			}
 			else // elliptic
 			{
 				double meanMotion = PI2 / prm.T;
@@ -3797,7 +3819,6 @@ void MapMFD::DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEME
 	}
 }
 
-
 void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp)
 {
 	// Plot the orbit track of a vessel
@@ -3846,13 +3867,13 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 			if (n > 0 && aboveSurface) // must be above surface, as we don't want to draw a line of it falling inside the planet
 			{
 				DrawLine(previousLong, previousLat, futureLong, futureLat, skp);
-				//if (n < 10) // debug
-				//{
-				//	char cbuf[50];
-				//	sprintf(cbuf, "n%i t%.1f step%.2f\u00B0 TrA%.2f\u00B0 MnA%.2f\u00B0", n, time, stepTrA * DEG, prm.TrA * DEG, prm.MnA * DEG);
-				//	DrawFeature(futureLong, futureLat, 2, BOX, skp, cbuf);
-				//}
-
+				
+				if (debugInformation && n < 10) // debug
+				{
+					char cbuf[50];
+					sprintf(cbuf, "n%i t%.1f step%.2f\u00B0 TrA%.2f\u00B0 MnA%.2f\u00B0", n, time, stepTrA * DEG, prm.TrA * DEG, prm.MnA * DEG);
+					DrawFeature(futureLong, futureLat, 2, BOX, skp, cbuf);
+				}
 			}
 
 			if (aboveSurface) // only propagate if above surface, so that if we're crashing, we save last valid position.
@@ -3886,6 +3907,26 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 				{
 					timeStep = desiredTime - time;
 					time = desiredTime;
+				}
+			}
+			else if (el.e < 0.02) // close to circular
+			{
+				// For the next time, we normally use the TrA to adjust for parts of orbit where we are moving fast/slow.
+				// But TrA breaks down for circular orbits, so then assume equal time steps.
+
+				// As an orbit has constant eccentricity, we actually never get to use stepTrA, so don't worry about it falling behind.
+				// But still check for the maxTimeStep limit, which can happen for circular orbits with high altitude.
+				timeStep = prm.T * angleDelta / PI2; // want this step
+				double desiredTime = time + timeStep;
+				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+				{
+					timeStep = maxTimeStep;
+					time += maxTimeStep;
+					debugCountOversteps++;
+				}
+				else
+				{
+					time += timeStep;
 				}
 			}
 			else // elliptic
@@ -3938,14 +3979,11 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 			double APe = el.omegab - LAN;
 
 			// This method is partly from NTRS document 20160000809
-			double M0 = prm.MnA;
-			double M = M0;
+			double M = prm.MnA;
 
 			// TrA in x seconds
 			double TrA = MnA2TrA(M, el.e);
 			TrA = fmod(TrA + PI2 * double(k) / double(W), PI2);
-			//double TrA0 = MnA2TrA(M0, el.e);
-
 
 			double lati = asin(sin(el.i) * sin(APe + TrA));
 
@@ -3953,19 +3991,6 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 
 			double angleFromAscendingNode = atan2(cos(el.i) * sin(APe + TrA), cos(APe + TrA));
 			double longi = normangle(currentLongitudeOfAscencion + angleFromAscendingNode);
-
-
-
-			//double u = APe + TrA;
-			//double u0 = APe + TrA0;
-			//double alpha = atan2(cos(u) * sin(LAN) + sin(u) * cos(LAN) * cos(el.i), cos(u) * cos(LAN) - sin(u) * sin(LAN) * cos(el.i));
-			//double alpha0 = atan2(cos(u0) * sin(LAN) + sin(u0) * cos(LAN) * cos(el.i), cos(u0) * cos(LAN) - sin(u0) * sin(LAN) * cos(el.i));
-			//alpha -= alpha0;
-
-			//double longi = alpha + currentLong;
-			//longi = normangle(longi);
-
-			//double lati = asin(sin(u) * sin(el.i));
 
 			if (k > 0)
 			{
@@ -3986,14 +4011,8 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 	}
 }
 
-bool MapMFD::TransformPoint(double longitude, double latitude, double* transformedLongitude, double* transformedLatitude, PROJECTION projection)
-{
-	double transLong, transLat;
-
-	double k0 = 1.0; // used for transverse Mercator, and several others as miscellanous constant
-	double A1 = 1.340264, A2 = -0.081106, A3 = 0.000893, A4 = 0.003796; // Coeffs used by Equal Earth
-	double theta; // parameter with various values used in Equal Earth and Mollweide
-	const double RobinsonCoeffs[19][2] = { // Robinson coeffs every 5 deg latitude, from 0 to 90
+// Robinson coeffs every 5 deg latitude, from 0 to 90. Decleared outside TransformPoint, so that it is not created ~6e4 times per sim step.
+const double RobinsonCoeffs[19][2] = {
 			{1.0000, 0.0000},
 			{0.9986, 0.0620},
 			{0.9954, 0.1240},
@@ -4013,9 +4032,15 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 			{0.6213, 0.9394},
 			{0.5722, 0.9761},
 			{0.5322, 1.0000}
-	};
-	const int BerghausStarLobes = 5; // number of arms in Berghaus Star projection.
+};
 
+bool MapMFD::TransformPoint(double longitude, double latitude, double* transformedLongitude, double* transformedLatitude, PROJECTION projection)
+{
+	double transLong, transLat;
+
+	double k0 = 1.0; // used for transverse Mercator, and several others as miscellanous constant
+	double A1 = 1.340264, A2 = -0.081106, A3 = 0.000893, A4 = 0.003796; // Coeffs used by Equal Earth
+	double theta; // parameter with various values used in Equal Earth and Mollweide
 
 	longitude = normangle(longitude - centreLong);
 
@@ -4139,7 +4164,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		break;
 	case MOLLWEIDE:
 		// https://en.wikipedia.org/wiki/Mollweide_projection
-		theta = latitude - 0.2 * sin(latitude); // approximation for Newton's method, so that convergence is faster 
+		theta = 0.92 * latitude; // approximation for Newton's method, so that convergence is faster. 0.92 is chosen so that the sum of error for all latitudes is minimised.
 		if (abs(latitude) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
 			theta = latitude / abs(latitude) * PI05; // set to sgn(lat) * PI05.
 		else
@@ -4159,7 +4184,7 @@ bool MapMFD::TransformPoint(double longitude, double latitude, double* transform
 		transLat = sqrt(2.0) * sin(theta);
 
 		// now find new theta for centreLat, and subtract that from transLat.
-		theta = centreLat - 0.2 * sin(centreLat);
+		theta = 0.92 * centreLat;
 		if (abs(centreLat) > PI05 * 0.999) // should be == PI05, but due to floating point error, we have to set to a close value. This value could be something like 1 - 1e-10, but we set to 0.999. Reason: none. Ask me. 
 			theta = centreLat / abs(centreLat) * PI05; // set to sgn(lat) * PI05.
 		else
@@ -4355,104 +4380,6 @@ bool MapMFD::GetEquPosInXSecondsAnalytical(double t, ELEMENTS el, ORBITPARAM prm
 	else return false;
 }
 
-//bool MapMFD::GetEquPosInXSeconds2(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude, int perturbation)
-//{
-//	double MnA;
-//	if (el.e > 1.0) MnA = prm.MnA + sqrt(refMu / pow(-el.a, 3)) * t; // http://control.asu.edu/Classes/MAE462/462Lecture05.pdf page 17.
-//	else MnA = prm.MnA + PI2 * t / prm.T;
-//	double TrA = MnA2TrA(MnA, el.e);
-//	double TrA0 = prm.TrA;
-//
-//	//if (t < 2.0) sprintf(oapiDebugString(), "TrA: %.2f\u00B0, MnA: %.2f\u00B0", TrA * DEG, MnA * DEG);
-//	//if (TrA < TrA0 - 1e-8) sprintf(oapiDebugString(), "ERROR! TrA = %f\u00B0 < TrA0 = %f\u00B0. Time %.1f", TrA * DEG, TrA0 * DEG, t);
-//
-//	//if (el.e < 1.0) TrA = posangle(TrA) + floor((prm.MnA + PI2 * t / prm.T) / PI2) * PI2; // 
-//
-//	//double TrA0 = prm.TrA;
-//
-//	// sin(latitude at some time) = sin(el.i) * sin(APe + TrA at some time)
-//	// i.e.
-//	double LAN = el.theta;
-//	double APe = el.omegab - LAN;
-//	// This gives bullshit results for high eccentricity (also for suborbital flights), so I'll simply disable it.
-//	if (v->NonsphericalGravityEnabled()) // Take J2 effects into consideration. Perturbs LAN and APe. But we only implement it for elliptical orbits, as I have no equation for orbits with no prm.T defined (i.e. hyperbolic orbits)
-//	{
-//		double J2 = oapiGetPlanetJCoeff(ref, 0); // 0 gives J2.
-//		// "Default" fraction of orbital period:
-//		if (perturbation == 1 && el.e < 1.0)
-//		{
-//			APe += 3.0 * PI2 / 4.0 * pow(refRad / el.a, 2.0) * (5.0 * cos(el.i) * cos(el.i) - 1.0) / pow(1.0 - el.e * el.e, 2.0) * J2 * t / prm.T;
-//			LAN += -3.0 * PI2 / 2.0 * pow(refRad / el.a, 2.0) * cos(el.i) / pow(1.0 - el.e * el.e, 2.0) * J2 * t / prm.T;
-//		}
-//
-//		// My adaptation with fraction of TrA
-//		if (perturbation == 2)
-//		{
-//			double semiLatusRectum = el.a * (1.0 - el.e * el.e); // semi-latus rectum is also valid for hyperbolic orbits.
-//			//double TrA0 = prm.TrA;
-//			APe += 3.0 * PI2 / 4.0 * refRad * refRad / semiLatusRectum / semiLatusRectum * (5.0 * cos(el.i) * cos(el.i) - 1.0) * J2 * (TrA - TrA0) / PI2;
-//			LAN += -3.0 / 2.0 * refRad * refRad / semiLatusRectum / semiLatusRectum * cos(el.i) * J2 * PI2 * (TrA - TrA0) / PI2;
-//		}
-//
-//		// Kozai:
-//		if (perturbation == 3)
-//		{
-//			double sin2i = sin(el.i) * sin(el.i);
-//			double e2 = el.e * el.e;
-//			double semiLatusRectum = el.a / refRad * (1.0 - e2);
-//			double meanMotion = PI2 / prm.T;
-//			double semi2 = semiLatusRectum * semiLatusRectum;
-//
-//			double dOmegaS = -J2 / semi2 * cos(el.i) * (TrA - MnA + el.e * sin(TrA) - 0.5 * sin(2.0 * (APe + TrA)) - el.e / 2.0 * sin(TrA + 2.0 * APe) - el.e / 6.0 * sin(3.0 * TrA + 2.0 * APe)); // unsure if TrA0 and MnA0 or for time t.
-//			double meanCos2TrA = (-el.e / (1.0 + sqrt(1.0 - e2))) * (-el.e / (1.0 + sqrt(1.0 - e2))) * (1.0 + 2.0 * sqrt(1.0 - e2)); // (11)
-//			double meanDOmegaS = -1.0 / 6.0 * J2 / semi2 * cos(el.i) * meanCos2TrA * cos(2.0 * APe); // (12)
-//			double OmegaDot = -J2 / semi2 * meanMotion * cos(el.i) * (1.0 + J2 / semi2 * (1.5 + e2 / 6.0 - 2.0 * sqrt(1.0 - e2) - sin2i * (5.0 / 3.0 - 5.0 / 24.0 * e2 - 3.0 * sqrt(1.0 - e2))));
-//			double dOmega1 = meanDOmegaS - J2 / semi2 * e2 * cos(el.i) / (2.0 * (4.0 - 5.0 * sin2i)) * ((7.0 - 15.0 * sin2i) / 6.0 + 5.0 * sin2i / (2.0 * (4.0 - 5.0 * sin2i)) * (14.0 - 15.0 * sin2i) / 6.0) * sin(2.0 * APe);
-//			LAN += OmegaDot * t + dOmegaS - meanDOmegaS + dOmega1;
-//
-//			double domegaS = J2 / semi2 * ((2.0 - 2.5 * sin2i) * (TrA - MnA + el.e * sin(TrA)) \
-//				+ (1.0 - 1.5 * sin2i) * (1.0 / el.e * (1.0 - 0.25 * el.e) * sin(TrA) + 0.5 * sin(2.0 * TrA) + el.e / 12.0 * sin(3.0 * TrA)) \
-//				- 1.0 / el.e * (0.25 * sin2i + (0.5 - 15.0 / 16.0 * sin2i) * e2) * sin(TrA + 2.0 * APe) + el.e / 16.0 * sin2i * sin(TrA - 2.0 * APe) \
-//				- 0.5 * (1.0 - 2.5 * sin2i) * sin(2.0 * (TrA + APe)) + 1.0 / el.e * (7.0 / 12.0 * sin2i - 1.0 / 6.0 * (1.0 - 19.0 / 8.0 * sin2i) * e2) * sin(3.0 * TrA + 2.0 * APe) \
-//				+ 3.0 / 8.0 * sin2i * sin(4.0 * TrA + 2.0 * APe) + el.e / 16.0 * sin2i * sin(5.0 * TrA + 2.0 * APe));
-//			double meanDomegaS = J2 / semi2 * (sin2i * (0.125 + (1.0 - e2) / 6.0 / e2 * meanCos2TrA) + 1.0 / 6.0 * cos(el.i) * cos(el.i) * meanCos2TrA) * sin(2.0 * APe);
-//			double omegaDot = J2 / semi2 * meanMotion * (2.0 - 2.5 * sin2i) * (1.0 + J2 / semi2 * (2.0 + e2 / 2.0 - 2.0 * sqrt(1.0 - e2) - sin2i * (43.0 / 24.0 - e2 / 48.0 - 3.0 * sqrt(1.0 - e2)))) - 5.0 / 12.0 * J2 * J2 / semi2 / semi2 * e2 * meanMotion * pow(cos(el.i), 4); // (28)
-//			double domega1 = meanDomegaS - 3.0 / 8.0 * J2 / semi2 * sin2i * sin(2.0 * APe) - J2 / semi2 * (1.0 / (4.0 - 5.0 * sin2i) * ((14.0 - 15.0 * sin2i) / 24.0 * sin2i - e2 * (28.0 - 158.0 * sin2i + 135.0 * sin2i * sin2i) / 48.0) - e2 * sin2i * (13.0 - 15.0 * sin2i) / (4.0 - 5.0 * sin2i) / (4.0 - 5.0 * sin2i) * (14.0 - 15.0 * sin2i) / 24.0) * sin(2.0 * APe); // (30)
-//			APe += omegaDot * t + domegaS - meanDomegaS + domega1; // (31)
-//		}
-//
-//		// Sauer:
-//		if (perturbation == 4)
-//		{
-//			double LANangleDiff = 6.0 * (TrA + el.e * sin(TrA)) - (3.0 * el.e * sin(2.0 * APe + TrA) + 3.0 * sin(2.0 * APe + 2.0 * TrA) + el.e * sin(2.0 * APe + 3.0 * TrA));
-//			LANangleDiff -= 6.0 * (TrA0 + el.e * sin(TrA0)) - (3.0 * el.e * sin(2.0 * APe + TrA0) + 3.0 * sin(2.0 * APe + 2.0 * TrA0) + el.e * sin(2.0 * APe + 3.0 * TrA0));
-//			double DeltaLAN = -J2 * cos(el.i) / 4.0 / pow(el.a / refRad * (1.0 - el.e * el.e), 2) * LANangleDiff; // we'll use this in the APe perturbation
-//			LAN += DeltaLAN;
-//
-//			double APeAngleDiff = (1.0 - 1.5 * sin(el.i) * sin(el.i)) * (TrA + (4.0 + 3.0 * el.e * el.e) / (4.0 * el.e) * sin(TrA) + 0.5 * sin(2.0 * TrA) + el.e / 12.0 * sin(3.0 * TrA)) \
-//				- sin(el.i) * sin(el.i) / (48.0 * el.e) * (3.0 * el.e * el.e * sin(2.0 * APe - TrA) + (12.0 - 21.0 * el.e * el.e) * sin(2.0 * APe + TrA) - 36.0 * el.e * sin(2.0 * APe + 2.0 * TrA) \
-//					- (28.0 + 11.0 * el.e * el.e) * sin(2.0 * APe + 3.0 * TrA) - 18.0 * el.e * sin(2.0 * APe + 4.0 * TrA) - 3.0 * el.e * sin(2.0 * APe + 5.0 * TrA));
-//			APeAngleDiff -= (1.0 - 1.5 * sin(el.i) * sin(el.i)) * (TrA0 + (4.0 + 3.0 * el.e * el.e) / (4.0 * el.e) * sin(TrA0) + 0.5 * sin(2.0 * TrA0) + el.e / 12.0 * sin(3.0 * TrA0)) \
-//				- sin(el.i) * sin(el.i) / (48.0 * el.e) * (3.0 * el.e * el.e * sin(2.0 * APe - TrA0) + (12.0 - 21.0 * el.e * el.e) * sin(2.0 * APe + TrA0) - 36.0 * el.e * sin(2.0 * APe + 2.0 * TrA0) \
-//					- (28.0 + 11.0 * el.e * el.e) * sin(2.0 * APe + 3.0 * TrA0) - 18.0 * el.e * sin(2.0 * APe + 4.0 * TrA0) - 3.0 * el.e * sin(2.0 * APe + 5.0 * TrA0));
-//			APe += J2 * 3.0 / 2.0 / pow(el.a / refRad * (1.0 - el.e * el.e), 2) * APeAngleDiff - cos(el.i) * DeltaLAN;
-//		}
-//	}
-//
-//	*latitude = asin(sin(el.i) * sin(APe + TrA));
-//
-//	//double deltaLambdaN1 = atan(sin(currentLatitude) * tan(asin(cos(el.i) / cos(currentLatitude))));
-//	//double lambdaNref = currentLongitude - deltaLambdaN1; // longitude of reference node
-//	double lambdaNref = LAN - oapiGetPlanetCurrentRotation(ref);
-//
-//	double deltaLambdaNS = atan2(cos(el.i) * sin(APe + TrA), cos(APe + TrA));
-//	*longitude = normangle(lambdaNref - PI2 / oapiGetPlanetPeriod(ref) * t + deltaLambdaNS);
-//
-//	double orbitRad = el.a * (1.0 - el.e * el.e) / (1.0 + el.e * cos(TrA));
-//	if (orbitRad > refRad) return true;
-//	else return false;
-//}
-
 void MapMFD::GetNextStateVector(double dt, VECTOR3 pos0, VECTOR3 vel0, VECTOR3* pos, VECTOR3* vel)
 {
 	VECTOR3 kr1 = vel0;
@@ -4478,44 +4405,22 @@ VECTOR3 MapMFD::GravitationalAcceleration(VECTOR3 r)
 	{
 		double R = length(r);
 		double J2 = oapiGetPlanetJCoeff(ref, 0);
-		//double J3 = oapiGetPlanetJCoeff(ref, 1);
-		//double J4 = oapiGetPlanetJCoeff(ref, 2);
 		double sinLat = r.z / R; // sin(lat) = sin(asin(r.z/R)) = r.z/R
 		double cosLat = sqrt(1.0 - r.z * r.z / R / R); // cos(lat) = cos(asin(r.z/R)) = sqrt(1.0 - r.z * r.z / R / R)
 		double lon = atan2(r.y, r.x);
-		//double lat = asin(r.z / R);
-		//return sphericalGravity * (1.0 + J2 * refRad / R * refRad / R * 0.5 * (3.0 * sinLat * sinLat - 1.0));
 		VECTOR3 latVector = _V(-sinLat * cos(lon), -sinLat * sin(lon), cosLat);
-		/*VECTOR3 nonSphericalGravity = unit(r) * (-refMu / length2(r) * (1.0 + J2 * refRad * refRad / R / R * 0.5 * (3.0 * sinLat * sinLat - 1.0)) + refMu / length(r) * J2 * refRad * refRad * (-2.0) / R / R / R * 0.5 * (3.0 * sinLat * sinLat - 1.0)) + 
-			unit(latVector) * (1.0 / R * refMu / R * J2 * refRad * refRad / R / R * 0.5 * (2.0 * 3.0 * sinLat * cosLat));*/
 
 		double refRad2 = refRad * refRad;
-		//double refRad3 = refRad2 * refRad;
-		//double refRad4 = refRad2 * refRad2;
 		double r2 = length2(r);
 		double r4 = r2 * r2;
-		//double r5 = r4 * length(r);
-		//double r6 = r2 * r4;
 		double sinLat2 = sinLat * sinLat;
-		//double sinLat3 = sinLat2 * sinLat;
-		//double sinLat4 = sinLat2 * sinLat2;
 
-		VECTOR3 nonSphericalGravity = -unit(r) * refMu / length2(r) - \
-			(unit(r) * -1.5 * refMu * refRad2 * J2 / r4 * (3.0 * sinLat2 - 1.0) + latVector * 3.0 * refMu * refRad2 * J2 / r4 * sinLat * cosLat);// -\
-			//(unit(r) * -2.0 * refMu * refRad3 * J3 / r5 * (5.0 * sinLat3 - 3.0 * sinLat) + latVector * 1.5 * refMu * refRad3 * J3 / r5 * (5.0 * sinLat2 * cosLat - cosLat)) - \
-			(unit(r) * -0.625 * refMu * refRad4 * J4 / r6 * (35.0 * sinLat4 - 30.0 * sinLat2 + 3.0) + latVector * 2.5 * refMu * refRad4 * J4 / r6 * (7.0 * sinLat3 * cosLat - 3.0 * sinLat * cosLat));
-
-		/*if (perturbation > 1)
-		{
-			VECTOR3 thirdBody = ((thirdBodyPos - r) / pow(length2(thirdBodyPos - r), 1.5) - thirdBodyPos / pow(length2(thirdBodyPos), 1.5)) * thirdBodyMu;
-
-			return nonSphericalGravity + thirdBody;
-		}*/
+		VECTOR3 nonSphericalGravity = sphericalGravity - \
+			(unit(r) * -1.5 * refMu * refRad2 * J2 / r4 * (3.0 * sinLat2 - 1.0) + latVector * 3.0 * refMu * refRad2 * J2 / r4 * sinLat * cosLat); // J2 perturbation, from technotes gravity.pdf
 
 		return nonSphericalGravity;
 	}
-	else
-		return sphericalGravity;
+	else return sphericalGravity;
 }
 
 void MapMFD::GetObjectEquPos(OBJHANDLE tgt, double* longitude, double* latitude, double *radius)
