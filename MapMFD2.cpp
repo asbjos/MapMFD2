@@ -291,6 +291,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGDRAWSPECIFICALT:
 				oapiOpenInputBox("Altitude (0 = off):", SpecificAltitudeSelection, 0, 20, (void*)this);
 				break;
+			case CONFIGCONSIDERTERRAIN:
+				groundtrackUseTerrain = !groundtrackUseTerrain;
+				break;
 			case CONFIGSHOWHISTORY:
 				showHistory = !showHistory;
 				if (!showHistory) shipHistoryLength = 0; // reset if turned off
@@ -379,6 +382,9 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 				break;
 			case CONFIGDRAWSPECIFICALT:
 				drawSpecificAlt = 0.0;
+				break;
+			case CONFIGCONSIDERTERRAIN:
+				groundtrackUseTerrain = false;
 				break;
 			case CONFIGSHOWHISTORY:
 				showHistory = true;
@@ -1256,6 +1262,7 @@ void MapMFD::StoreStatus() const
 	MapMFDState.shipHistoryLength = shipHistoryLength;
 	MapMFDState.showVessels = showVessels;
 	MapMFDState.showHistory = showHistory;
+	MapMFDState.groundtrackUseTerrain = groundtrackUseTerrain;
 }
 
 void MapMFD::RecallStatus()
@@ -1302,6 +1309,7 @@ void MapMFD::RecallStatus()
 		shipHistoryLength = MapMFDState.shipHistoryLength;
 		showVessels = MapMFDState.showVessels;
 		showHistory = MapMFDState.showHistory;
+		groundtrackUseTerrain = MapMFDState.groundtrackUseTerrain;
 	}
 	else if (resetCommand)
 	{
@@ -1554,6 +1562,13 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	if (drawSpecificAlt == 0.0) sprintf(cbuf, " Off"); // Add space, as format value does it, and we later remove that space
 	else FormatValue(cbuf, 20, drawSpecificAlt);
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGDRAWSPECIFICALT) * dY, cbuf + 1, strlen(cbuf + 1)); // Format value creates an ugly space before number, so remove it here
+	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
+
+	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track mode, so indicate that by graying out if not in that
+	sprintf(cbuf, "Consider terrain for groundtrack");
+	skp->Text(textX0, textY0 + int(CONFIGCONSIDERTERRAIN) * dY, cbuf, strlen(cbuf));
+	sprintf(cbuf, groundtrackUseTerrain ? "On" : "Off");
+	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGCONSIDERTERRAIN) * dY, cbuf, strlen(cbuf));
 	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
 
 	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track mode, so indicate that by graying out if not in that
@@ -3161,26 +3176,17 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 	stateVel.z = stateVel.y;
 	stateVel.y = buffer;
 
-	//skp->SetPen(mainOrbitTrack);
-	//DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // main orbit track
+	// Main orbit track
 	skp->SetPen(mainOrbitTrack); // attempted improvement of above thing
 	if (groundtrackNumeric) DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp); // RK4 J2
 	else DrawOrbitTrackAnalytic(currentLong, currentLat, el, prm, skp); // analytical
-	//DrawOrbitTrack(currentLong, currentLat, el, prm, skp); // analytical
-	//skp->SetPen(targetOrbitTrack); // attempted improvement of above thing
-	//DrawOrbitTrackAnalytic(currentLong, currentLat, el, prm, skp); // analytical
-	//DrawOrbitTrack2(statePos, stateVel, el, prm, skp, 0); // RK4 spherical
-	//skp->SetPen(coastLines); // attempted improvement of above thing
-	//OBJHANDLE thirdBody = oapiGetGbodyByName("Sun");
-	//VECTOR3 thirdBodyPos;
-	//oapiGetRelativePos(thirdBody, ref, &thirdBodyPos);
-	//buffer = thirdBodyPos.z;
-	//thirdBodyPos.z = thirdBodyPos.y;
-	//thirdBodyPos.y = buffer;
-	//double thirdBodyMu = GGRAV * oapiGetMass(thirdBody);
-	//skp->SetPen(terminatorLine); // attempted improvement of above thing
-	//DrawOrbitTrack2(statePos, stateVel, el, prm, skp, 2); // Jarmonik mu https://www.orbiter-forum.com/threads/non-spherical-gravity-for-elliptic-orbit.39881/#post-582107
-	//sprintf(oapiDebugString(), "surfGrav0: %.4f, surfGrav1: %.4f, refRad: %e", length(GravitationalAcceleration(unit(statePos) * refRad, 0)), length(GravitationalAcceleration(unit(statePos) * refRad, 1)), refRad);
+
+	if (debugInformation) // draw the second calculation (i.e. both analytic & numeric)
+	{
+		skp->SetPen(targetOrbitTrack);
+		if (!groundtrackNumeric) DrawOrbitTrackNumeric(statePos, stateVel, el, prm, skp); // RK4 J2
+		else DrawOrbitTrackAnalytic(currentLong, currentLat, el, prm, skp); // analytical
+	}
 
 	// Draw marker for a pre-determined altitude. Useful if you want to know where you go below e.g. 60 km during reentry.
 	double radiusToDraw = drawSpecificAlt + refRad;
@@ -3858,10 +3864,13 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 			{
 				GetNextStateVector(timeStep, pos, vel, &futurePos, &futureVel);
 				double dist = length(futurePos);
-				aboveSurface = dist > refRad;
 				futureLat = asin(futurePos.z / dist);
 				futureLong = normangle(atan2(futurePos.y, futurePos.x) - oapiGetPlanetCurrentRotation(ref) - PI2 * time / oapiGetPlanetPeriod(ref));
-				//aboveSurface = GetEquPosInXSeconds2(time, el, prm, currentLong, &futureLong, &futureLat, perturbation);
+				if (groundtrackUseTerrain)
+				{
+					aboveSurface = dist > refRad + oapiSurfaceElevation(ref, futureLong, futureLat); // return false if inside a mountain. This only considers each time step. If two steps are in front of and behind mountain, this is true, although we in the middle will crash.
+				}
+				else aboveSurface = dist > refRad;
 			}
 
 			if (n > 0 && aboveSurface) // must be above surface, as we don't want to draw a line of it falling inside the planet
@@ -4376,8 +4385,18 @@ bool MapMFD::GetEquPosInXSecondsAnalytical(double t, ELEMENTS el, ORBITPARAM prm
 	*longitude = normangle(currentLongitudeOfAscencion - PI2 / oapiGetPlanetPeriod(ref) * t + angleFromAscendingNode);
 
 	double orbitRad = el.a * (1.0 - el.e * el.e) / (1.0 + el.e * cos(TrA));
-	if (orbitRad > refRad) return true;
-	else return false;
+
+	if (groundtrackUseTerrain)
+	{
+		// return false if inside a mountain. This only considers each time step. If two steps are in front of and behind mountain, this is true, although we in the middle will crash.
+		if (orbitRad > refRad + oapiSurfaceElevation(ref, *longitude, *latitude)) return true;
+		else return false;
+	}
+	else
+	{
+		if (orbitRad > refRad) return true;
+		else return false;
+	}
 }
 
 void MapMFD::GetNextStateVector(double dt, VECTOR3 pos0, VECTOR3 vel0, VECTOR3* pos, VECTOR3* vel)
