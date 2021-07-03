@@ -12,7 +12,7 @@ For other use, please contact me (I'm username 'asbjos' on Orbiter-Forum).
 //enum PROJECTION { EQUIRECTANGULAR, MILLER, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, AITOFF, HAMMER, LOXIMUTHAL, LASKOWSKI, ORTELIUSOVAL, WINKELTRIPEL, RECTANGULARPOLYCONIC, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GNOMONIC, BERGHAUSSTAR, CASSINI, GALLPETERS, HOBODYER, LASTENTRYPROJECTION };
 enum PROJECTION { EQUIRECTANGULAR, MERCATOR, VANDERGRINTEN, TRANSVERSEMERCATOR, ROBINSON, EQUALEARTH, MOLLWEIDE, HAMMER, LOXIMUTHAL, LASKOWSKI, WINKELTRIPEL, AZIMUTHALEQUIDISTANT, LAMBERTAZIMUTHAL, STEREOGRAPHIC, GALLPETERS, LASTENTRYPROJECTION };
 enum MAPFEATURE { BOX, CROSS, RINGS };
-enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGNUMERICVSANALYTIC, CONFIGCONSIDERTERRAIN, CONFIGTRACKANGLEDELTA, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGMARKERS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
+enum CONFIGSELECT { CONFIGTRACKMODE, CONFIGRADAR, CONFIGSHOWVESSELS, CONFIGDRAWSPECIFICALT, CONFIGCONSIDERTERRAIN, CONFIGTRACKANGLEDELTA, CONFIGSHOWHISTORY, CONFIGPROJECTION/*, CONFIGFLIPPOLE*/, CONFIGRESETMAP, CONFIGGRIDSEP, CONFIGGRIDRES, CONFIGMAPRES, CONFIGMAPAUTOSIZE, CONFIGNUMERICVSANALYTIC, CONFIGTRACKMAXPERIODFRAC, CONFIGTRACKNUMORBITS, CONFIGPLANETVIEWSEGMENTS, CONFIGMARKERS, CONFIGRESETALL, CONFIGDEBUGINFO, LASTENTRYCONFIG };
 enum TRACKMODE { NOTRACK, LONGTRACK, LATLONGTRACK, LASTENTRYTRACK };
 enum TARGETEXPANDMODES { EXPANDSPACEPORTS, EXPANDSPACECRAFT, EXPANDMOONS, EXPANDNONE = -1}; // set EXPANDNONE to -1, so that we can do a >= 0 check to see if something is expanded
 
@@ -121,11 +121,9 @@ public:
 	void DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS el, ORBITPARAM prm, oapi::Sketchpad* skp); // attempted improvement of above function.
 
 	bool TransformPoint(double longitude, double latitude, double *transformedLongitude, double *transformedLatitude, PROJECTION projection);
-	//char* GetProjectionName(void);
 	char* GetCoordinateString(double longitude, double latitude);
 
 	bool GetEquPosInXSecondsAnalytical(double t, ELEMENTS el, ORBITPARAM prm, double* longitude, double* latitude); // return false if altitude below surface
-	//bool GetEquPosInXSeconds2(double t, ELEMENTS el, ORBITPARAM prm, double currentLongitude, double* longitude, double* latitude, int perturbation); // attempted improvement of above function.
 	void GetNextStateVector(double dt, VECTOR3 pos0, VECTOR3 vel0, VECTOR3* pos, VECTOR3* vel);
 	VECTOR3 GravitationalAcceleration(VECTOR3 r);
 	void GetObjectEquPos(OBJHANDLE tgt, double* longitude, double* latitude, double *radius);
@@ -147,8 +145,6 @@ public:
 	VECTOR3 Ecl2Equ(VECTOR3 Ecl);
 	VECTOR3 Coord2Vector(double longitude, double latitude);
 	double AngleSameTurn(double inputAngle, const double refAngle);
-
-	//void myStrncpy(char* writeTo, const char* readFrom, int len);
 
 private:
 	OBJHANDLE ref; // planet reference
@@ -247,8 +243,6 @@ private:
 	oapi::Pen* groundCoverageLine;
 	oapi::Pen* targetGroundCoverageLine;
 	oapi::Brush* sunIcon;
-	//oapi::Font* defaultFont;
-	//oapi::Font* configFont;
 	oapi::Font* mapObjectFont;
 	oapi::Pen* gradientRedGreen[COLOUR_BIT_DEPTH];
 

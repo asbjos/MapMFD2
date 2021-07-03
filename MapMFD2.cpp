@@ -23,11 +23,8 @@
 #include "orbitersdk.h"
 #include "MapMFD2.h"
 
-//#include <string>
-//#include <iostream>
 #define _SILENCE_EXPERIMENTAL_FILESYSTEM_DEPRECATION_WARNING
 #include <experimental/filesystem>
-//using namespace std;
 namespace fs = std::experimental::filesystem;
 
 
@@ -217,22 +214,6 @@ bool MapMFD::ConsumeButton(int bt, int event)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_C);
 		}
-		/*if (bt == 6 && trackPosition != LATLONGTRACK)
-		{
-			return ConsumeKeyBuffered(OAPI_KEY_MINUS);
-		}
-		if (bt == 7 && trackPosition != LATLONGTRACK)
-		{
-			return ConsumeKeyBuffered(OAPI_KEY_EQUALS);
-		}
-		if (bt == 8 && trackPosition == NOTRACK)
-		{
-			return ConsumeKeyBuffered(OAPI_KEY_LBRACKET);
-		}
-		if (bt == 9 && trackPosition == NOTRACK)
-		{
-			return ConsumeKeyBuffered(OAPI_KEY_RBRACKET);
-		}*/
 		if (bt == 10)
 		{
 			return ConsumeKeyBuffered(OAPI_KEY_M);
@@ -301,9 +282,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGPROJECTION:
 				proj = PROJECTION((int(proj) + 1) % int(LASTENTRYPROJECTION));
 				break;
-			/*case CONFIGFLIPPOLE:
-				azimuthalEquidistantNortPole = !azimuthalEquidistantNortPole;
-				break;*/
 			case CONFIGRESETMAP:
 				centreLat = 0.0;
 				centreLong = 0.0;
@@ -392,9 +370,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			case CONFIGPROJECTION:
 				proj = EQUIRECTANGULAR;
 				break;
-			/*case CONFIGFLIPPOLE:
-				azimuthalEquidistantNortPole = true;
-				break;*/
 			case CONFIGRESETMAP:
 				centreLat = 0.0;
 				centreLong = 0.0;
@@ -727,7 +702,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			return true;
 		case OAPI_KEY_N:
 			// Select nearest object in expanded list
-
 			double closestDistance;
 			closestDistance = 1e20; // "infinity"
 			OBJHANDLE closestObject;
@@ -898,21 +872,6 @@ bool MapMFD::ConsumeKeyBuffered(DWORD key)
 			InvalidateButtons();
 			InvalidateDisplay(); // also a fitting occation to update display, so that we don't have to wait for that to happen.
 			return true;
-		// Pan buttons are moved to ConsumeKeyImmediate
-		/*case OAPI_KEY_MINUS:
-			centreLat += 15.0 * RAD / double(centreZoom);
-			if (centreLat > PI05) centreLat = PI05;
-			return true;
-		case OAPI_KEY_EQUALS:
-			centreLat -= 15.0 * RAD / double(centreZoom);
-			if (centreLat < -PI05) centreLat = -PI05;
-			return true;
-		case OAPI_KEY_LBRACKET:
-			centreLong = normangle(centreLong - 15.0 * RAD / double(centreZoom));
-			return true;
-		case OAPI_KEY_RBRACKET:
-			centreLong = normangle(centreLong + 15.0 * RAD / double(centreZoom));
-			return true;*/
 		case OAPI_KEY_M:
 			numTargets -= 1;
 			if (numTargets < 0) numTargets = 0;
@@ -1223,7 +1182,6 @@ bool MapMFD::SetSpecificAltitudeSelect(char* rstr)
 void MapMFD::StoreStatus() const
 {
 	MapMFDState.autoResolution = autoResolution;
-	//MapMFDState.azimuthalEquidistantNortPole = azimuthalEquidistantNortPole;
 	MapMFDState.centreLat = centreLat;
 	MapMFDState.centreLong = centreLong;
 	MapMFDState.centreZoom = centreZoom;
@@ -1583,7 +1541,6 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 
 	sprintf(cbuf, "Projection");
 	skp->Text(textX0, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
-	//sprintf(cbuf, GetProjectionName());
 	sprintf(cbuf, GetSpecificProjectionName(proj));
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGPROJECTION) * dY, cbuf, strlen(cbuf));
 
@@ -1903,14 +1860,6 @@ void MapMFD::MakeSunLight(oapi::Sketchpad *skp)
 	// For Mercury, the angle is 90.67 degrees.
 	// But turns out that it's MUCH easier to get a nice-looking result using the PI05 simplification, so we don't get the opportunity to be pedantic.
 
-	//// Add icon for sun position first. If the later daylight fill works, this will be overwritten. If it doesn't this shows up as a backup
-	//double transformedSunLong, transformedSunLat;
-	//TransformPoint(sunLong, sunLat, &transformedSunLong, &transformedSunLat, proj);
-
-	//skp->SetBrush(sunIcon);
-	//skp->SetPen(NULL);
-	//int sunSize = 10;
-	//skp->Ellipse(int(W / 2 + transformedSunLong / PI * W / 2) - sunSize, int(H / 2 - transformedSunLat / PI05 * H / 4) - sunSize, int(W / 2 + transformedSunLong / PI * W / 2) + sunSize, int(H / 2 - transformedSunLat / PI05 * H / 4) + sunSize);
 	skp->SetBrush(NULL); // disable autofilling
 
 	// For debug-text:
