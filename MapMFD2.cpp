@@ -1262,6 +1262,7 @@ void MapMFD::StoreStatus() const
 	MapMFDState.shipHistoryLength = shipHistoryLength;
 	MapMFDState.showVessels = showVessels;
 	MapMFDState.showHistory = showHistory;
+	MapMFDState.groundtrackNumeric = groundtrackNumeric;
 	MapMFDState.groundtrackUseTerrain = groundtrackUseTerrain;
 }
 
@@ -1309,6 +1310,7 @@ void MapMFD::RecallStatus()
 		shipHistoryLength = MapMFDState.shipHistoryLength;
 		showVessels = MapMFDState.showVessels;
 		showHistory = MapMFDState.showHistory;
+		groundtrackNumeric = MapMFDState.groundtrackNumeric;
 		groundtrackUseTerrain = MapMFDState.groundtrackUseTerrain;
 	}
 	else if (resetCommand)
@@ -2865,10 +2867,7 @@ void MapMFD::MakeMarkers(oapi::Sketchpad* skp, const char* refName)
 			}
 		}
 	}
-	else
-	{
-		//sprintf(oapiDebugString(), "Marker folder %s. No markers present!", folderPath);
-	}
+	//else sprintf(oapiDebugString(), "Marker folder %s. No markers present!", folderPath);
 }
 
 void MapMFD::MakeSurfaceBasesAndVessels(oapi::Sketchpad* skp)
@@ -3712,30 +3711,32 @@ void MapMFD::DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEME
 				}
 				else time = desiredTime;
 			}
-			else if (el.e < 0.02) // close to circular
-			{
-				// For the next time, we normally use the TrA to adjust for parts of orbit where we are moving fast/slow.
-				// But TrA breaks down for circular orbits, so then assume equal time steps.
+			//else if (el.e < 0.02) // close to circular
+			//{
+			//	// For the next time, we normally use the TrA to adjust for parts of orbit where we are moving fast/slow.
+			//	// But TrA breaks down for circular orbits, so then assume equal time steps.
 
-				// As an orbit has constant eccentricity, we actually never get to use stepTrA, so don't worry about it falling behind.
-				// But still check for the maxTimeStep limit, which can happen for circular orbits with high altitude.
-				double timeStep = prm.T * angleDelta / PI2; // want this step
-				double desiredTime = time + timeStep;
-				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
-				{
-					timeStep = maxTimeStep;
-					time += maxTimeStep;
-					debugCountOversteps++;
-				}
-				else
-				{
-					time += timeStep;
-				}
-			}
+			//	// As an orbit has constant eccentricity, we actually never get to use stepTrA, so don't worry about it falling behind.
+			//	// But still check for the maxTimeStep limit, which can happen for circular orbits with high altitude.
+			//	double timeStep = prm.T * angleDelta / PI2; // want this step
+			//	double desiredTime = time + timeStep;
+			//	if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+			//	{
+			//		timeStep = maxTimeStep;
+			//		time += maxTimeStep;
+			//		debugCountOversteps++;
+			//	}
+			//	else
+			//	{
+			//		time += timeStep;
+			//	}
+			//}
 			else // elliptic
 			{
+				futureMnA = AngleSameTurn(futureMnA, stepTrA);
+
 				double meanMotion = PI2 / prm.T;
-				double desiredTime = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
+				double desiredTime = (futureMnA - prm.MnA) / meanMotion;
 				
 				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
 				{
@@ -3778,13 +3779,10 @@ void MapMFD::DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEME
 
 			// This method is partly from NTRS document 20160000809
 			double M0 = prm.MnA;
-			double M = M0;
 
 			// TrA in x seconds
-			double TrA = MnA2TrA(M, el.e);
+			double TrA = MnA2TrA(M0, el.e);
 			TrA = fmod(TrA + PI2 * double(k) / double(W), PI2);
-			//double TrA0 = MnA2TrA(M0, el.e);
-
 
 			double lati = asin(sin(el.i) * sin(APe + TrA));
 
@@ -3792,19 +3790,6 @@ void MapMFD::DrawOrbitTrackAnalytic(double currentLong, double currentLat, ELEME
 
 			double angleFromAscendingNode = atan2(cos(el.i) * sin(APe + TrA), cos(APe + TrA));
 			double longi = normangle(currentLongitudeOfAscencion + angleFromAscendingNode);
-
-
-
-			//double u = APe + TrA;
-			//double u0 = APe + TrA0;
-			//double alpha = atan2(cos(u) * sin(LAN) + sin(u) * cos(LAN) * cos(el.i), cos(u) * cos(LAN) - sin(u) * sin(LAN) * cos(el.i));
-			//double alpha0 = atan2(cos(u0) * sin(LAN) + sin(u0) * cos(LAN) * cos(el.i), cos(u0) * cos(LAN) - sin(u0) * sin(LAN) * cos(el.i));
-			//alpha -= alpha0;
-
-			//double longi = alpha + currentLong;
-			//longi = normangle(longi);
-
-			//double lati = asin(sin(u) * sin(el.i));
 
 			if (k > 0)
 			{
@@ -3877,7 +3862,7 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 			{
 				DrawLine(previousLong, previousLat, futureLong, futureLat, skp);
 				
-				if (debugInformation && n < 10) // debug
+				if (debugInformation && n < 10 && centreZoom >= 16) // debug. But only for zoom, as I don't want a perpetuate long string of text.
 				{
 					char cbuf[50];
 					sprintf(cbuf, "n%i t%.1f step%.2f\u00B0 TrA%.2f\u00B0 MnA%.2f\u00B0", n, time, stepTrA * DEG, prm.TrA * DEG, prm.MnA * DEG);
@@ -3918,30 +3903,33 @@ void MapMFD::DrawOrbitTrackNumeric(VECTOR3 statePos, VECTOR3 stateVel, ELEMENTS 
 					time = desiredTime;
 				}
 			}
-			else if (el.e < 0.02) // close to circular
-			{
-				// For the next time, we normally use the TrA to adjust for parts of orbit where we are moving fast/slow.
-				// But TrA breaks down for circular orbits, so then assume equal time steps.
+			//else if (el.e < 0.02) // close to circular
+			//{
+			//	// For the next time, we normally use the TrA to adjust for parts of orbit where we are moving fast/slow.
+			//	// But TrA breaks down for circular orbits, so then assume equal time steps.
 
-				// As an orbit has constant eccentricity, we actually never get to use stepTrA, so don't worry about it falling behind.
-				// But still check for the maxTimeStep limit, which can happen for circular orbits with high altitude.
-				timeStep = prm.T * angleDelta / PI2; // want this step
-				double desiredTime = time + timeStep;
-				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
-				{
-					timeStep = maxTimeStep;
-					time += maxTimeStep;
-					debugCountOversteps++;
-				}
-				else
-				{
-					time += timeStep;
-				}
-			}
+			//	// As an orbit has constant eccentricity, we actually never get to use stepTrA, so don't worry about it falling behind.
+			//	// But still check for the maxTimeStep limit, which can happen for circular orbits with high altitude.
+			//	timeStep = prm.T * angleDelta / PI2; // want this step
+			//	double desiredTime = time + timeStep;
+			//	if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
+			//	{
+			//		timeStep = maxTimeStep;
+			//		time += maxTimeStep;
+			//		debugCountOversteps++;
+			//	}
+			//	else
+			//	{
+			//		time += timeStep;
+			//	}
+			//}
 			else // elliptic
 			{
+				futureMnA = AngleSameTurn(futureMnA, stepTrA);
+
 				double meanMotion = PI2 / prm.T;
-				double desiredTime = posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
+				double desiredTime = (futureMnA - prm.MnA) / meanMotion;
+					//posangle(futureMnA - prm.MnA) / meanMotion + floor((stepTrA - prm.TrA) / PI2) * prm.T;
 
 				if (desiredTime - time > maxTimeStep) // new time is too large step from previous time.
 				{
@@ -4386,7 +4374,7 @@ bool MapMFD::GetEquPosInXSecondsAnalytical(double t, ELEMENTS el, ORBITPARAM prm
 
 	double orbitRad = el.a * (1.0 - el.e * el.e) / (1.0 + el.e * cos(TrA));
 
-	if (groundtrackUseTerrain)
+	if (groundtrackUseTerrain) // considerTerrainMaxAlt in km.
 	{
 		// return false if inside a mountain. This only considers each time step. If two steps are in front of and behind mountain, this is true, although we in the middle will crash.
 		if (orbitRad > refRad + oapiSurfaceElevation(ref, *longitude, *latitude)) return true;
@@ -4502,7 +4490,7 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 	double period = PI2 * sqrt(pow(SMa, 3) / refMu);
 	double MnA = eccentricAnomaly - eccentricity * sin(eccentricAnomaly);
 	if (eccentricity > 1.0) MnA = eccentricity * sinh(eccentricAnomaly) - eccentricAnomaly;
-	//else MnA = posangle(MnA); // if elliptical orbit, make it a posangle. This simplifies calculations later on.
+	//else MnA = posangle(MnA); // if elliptical orbit, make it a posangle. This simplifies calculations later on. 
 
 	el.a = SMa;
 	el.e = eccentricity;
@@ -4532,10 +4520,6 @@ char* MapMFD::GetCoordinateString(double longitude, double latitude)
 // MnA in radians
 inline double MapMFD::MnA2TrA(double MnA, double Ecc)
 {
-	//double TrA = MnA + (2.0 * Ecc - pow(Ecc, 3.0) / 4.0) * sin(MnA) + 5.0 / 4.0 * pow(Ecc, 2.0) * sin(2.0 * MnA) + 13.0 / 12.0 * pow(Ecc, 3.0) * sin(3.0 * MnA);
-	// Old Taylor series diverges for high eccentricities. Instead, we now first convert from MnA to EccAnomaly (using Newton's method), and then analytical conversion to TrA
-	// While old Taylor required an Ecc < 0.4, the new method requires Ecc < 0.98, so much much better.
-
 	const double precision = 1e-8;
 
 	// And for hyperbolic orbits, we are now featuring another method, using the hyperbolic orbit equations.
@@ -4619,5 +4603,14 @@ inline VECTOR3 MapMFD::Coord2Vector(double longitude, double latitude)
 	double coordRadius = refRad + oapiSurfaceElevation(ref, longitude, latitude); // distance to centre of planet from coordinate (adding surface elevation).
 	double rotationAngle = oapiGetPlanetCurrentRotation(ref); // get the angle to add.
 	return _V(cos(longitude + rotationAngle) * cos(latitude), sin(latitude), sin(longitude + rotationAngle) * cos(latitude)) * coordRadius;
+}
+
+// Return the input angle in the same period as refAngle, so for example inputAngle 20 deg and refAngle 480 deg will return 20+360=380 deg, because 380 and 480 are between 360 and 720.
+double MapMFD::AngleSameTurn(double inputAngle, const double refAngle)
+{
+	double refTurns = floor(refAngle / PI2); // rounds down, so floor(-2.3) = -3.0
+	double inputTurns = floor(inputAngle / PI2);
+	return inputAngle + (refTurns - inputTurns) * PI2;
+	//return 0.0;
 }
 

@@ -146,6 +146,7 @@ public:
 	double EccentricAnomaly(double ecc, double TrA);
 	VECTOR3 Ecl2Equ(VECTOR3 Ecl);
 	VECTOR3 Coord2Vector(double longitude, double latitude);
+	double AngleSameTurn(double inputAngle, const double refAngle);
 
 	//void myStrncpy(char* writeTo, const char* readFrom, int len);
 
@@ -290,6 +291,7 @@ struct
 	double orbitTrackOrbitsNumber; // new
 	bool displayElevationRadar; // new
 	double drawSpecificAlt;
+	bool groundtrackNumeric; // newnewnew
 	bool groundtrackUseTerrain; // newnewnew
 
 	double centreLat, centreLong;
@@ -585,20 +587,6 @@ int MapMFD::MsgProc(UINT msg, UINT mfd, WPARAM wparam, LPARAM lparam)
 // ==============================================================
 // API interface
 
-void ReadUserColour(FILEHANDLE cfgFile, char *label, DWORD *colour)
-{
-	char colourString[10];
-	bool couldRead = oapiReadItem_string(cfgFile, label, colourString);
-	if (couldRead && strlen(colourString) == 6)
-	{
-		*colour = strtoul(colourString, NULL, 16);
-	}
-	else
-	{
-		oapiWriteLogV("MapMFD2 ERROR! Could not find/understand %s colour in config file!", label);
-	}
-}
-
 char* GetSpecificProjectionName(int proj)
 {
 	// Write projection
@@ -606,8 +594,8 @@ char* GetSpecificProjectionName(int proj)
 	{
 	case EQUIRECTANGULAR:
 		return "Equirectangular";
-	//case MILLER:
-		//return "Miller";
+		//case MILLER:
+			//return "Miller";
 	case MERCATOR:
 		return "Mercator";
 	case VANDERGRINTEN:
@@ -620,28 +608,28 @@ char* GetSpecificProjectionName(int proj)
 		return "Equal Earth";
 	case MOLLWEIDE:
 		return "Mollweide";
-	/*case OBLIQUEMOLLWEIDE:
-		return "Oblique Mollweide";*/
+		/*case OBLIQUEMOLLWEIDE:
+			return "Oblique Mollweide";*/
 	case HAMMER:
 		return "Hammer";
 	case LOXIMUTHAL:
 		return "Loximuthal";
 	case LASKOWSKI:
 		return "Laskowski";
-	//case ORTELIUSOVAL:
-		//return "Ortelius Oval";
+		//case ORTELIUSOVAL:
+			//return "Ortelius Oval";
 	case WINKELTRIPEL:
 		return "Winkel Tripel";
-	//case RECTANGULARPOLYCONIC:
-		//return "Rectangular Polyconic";
+		//case RECTANGULARPOLYCONIC:
+			//return "Rectangular Polyconic";
 	case AZIMUTHALEQUIDISTANT:
 		return "Azimuthal Equidistant";
 	case LAMBERTAZIMUTHAL:
 		return "Lambert Azimuthal Equal-area";
 	case STEREOGRAPHIC:
 		return "Stereographic";
-	//case GNOMONIC:
-		//return "Gnomonic";
+		//case GNOMONIC:
+			//return "Gnomonic";
 	case GALLPETERS:
 		return "Gall-Peters";
 	default:
@@ -662,6 +650,55 @@ void myStrncpy(char* writeTo, const char* readFrom, int len)
 	writeTo[i] = '\0';
 }
 
+void ReadUserColour(FILEHANDLE cfgFile, char *label, DWORD *colour)
+{
+	char colourString[10];
+	bool couldRead = oapiReadItem_string(cfgFile, label, colourString);
+	if (couldRead && strlen(colourString) == 6)
+	{
+		*colour = strtoul(colourString, NULL, 16);
+	}
+	else
+	{
+		oapiWriteLogV("MapMFD2 ERROR! Could not find/understand %s colour in config file!", label);
+	}
+}
+
+void myReadInt(FILEHANDLE cfg, char* tag, int& value)
+{
+	int newValue;
+	bool readSuccess = oapiReadItem_int(cfg, tag, newValue);
+	if (readSuccess)
+	{
+		value = newValue;
+		//oapiWriteLogV("MapMFD2 successfully read tag %s from config. Set to %i.", tag, value);
+	}
+	else oapiWriteLogV("MapMFD2 failed to read tag %s from config. Value hardcoded to %i.", tag, value);
+}
+
+void myReadBool(FILEHANDLE cfg, char* tag, bool& value)
+{
+	bool newValue;
+	bool readSuccess = oapiReadItem_bool(cfg, tag, newValue);
+	if (readSuccess)
+	{
+		value = newValue;
+		//oapiWriteLogV("MapMFD2 successfully read tag %s from config. Set to %s.", tag, value ? "TRUE" : "FALSE");
+	}
+	else oapiWriteLogV("MapMFD2 failed to read tag %s from config. Value hardcoded to %s.", tag, value ? "TRUE" : "FALSE");
+}
+
+void myReadFloat(FILEHANDLE cfg, char* tag, double& value)
+{
+	double newValue;
+	bool readSuccess = oapiReadItem_float(cfg, tag, newValue);
+	if (readSuccess)
+	{
+		value = newValue;
+		//oapiWriteLogV("MapMFD2 successfully read tag %s from config. Set to %f.", tag, value);
+	}
+	else oapiWriteLogV("MapMFD2 failed to read tag %s from config. Value hardcoded to %f.", tag, value);
+}
 
 DLLCLBK void InitModule(HINSTANCE hDLL)
 {
@@ -674,91 +711,95 @@ DLLCLBK void InitModule(HINSTANCE hDLL)
 	// Register the new MFD mode with Orbiter
 	g_MFDmode = oapiRegisterMFDMode(spec);
 
-	FILEHANDLE cfgFile = oapiOpenFile("MFD\\MapMFD2.cfg", FILE_IN, CONFIG);
-
-	oapiReadItem_int(cfgFile, "DefTrackMode", DEFAULT_VALUES.TRACK_MODE);
-	oapiReadItem_int(cfgFile, "DefProjection", DEFAULT_VALUES.PROJECTION);
-	oapiReadItem_int(cfgFile, "DefGridAngleSep", DEFAULT_VALUES.GRID_ANGLE_SEP);
-	oapiReadItem_int(cfgFile, "DefGridResolution", DEFAULT_VALUES.GRID_RESOLUTION);
-	oapiReadItem_int(cfgFile, "DefDefaultLinesAmount", DEFAULT_VALUES.LINES_AMOUNT);
-	oapiReadItem_float(cfgFile, "DefGroundTrackStep", DEFAULT_VALUES.GROUNDTRACK_STEP);
-	oapiReadItem_float(cfgFile, "DefGroundTrackMaxTimePeriodFraction", DEFAULT_VALUES.GROUNDTRACK_MAXTIMEFRAC);
-	oapiReadItem_float(cfgFile, "DefTrackOrbitsNumber", DEFAULT_VALUES.GROUNDTRACK_ORBITS);
-	oapiReadItem_int(cfgFile, "DefViewCircleResolution", DEFAULT_VALUES.VIEW_CIRCLE_RESOLUTION);
-	oapiReadItem_bool(cfgFile, "DefShowAltitudeRadar", DEFAULT_VALUES.ELEVATION_RADAR);
-	oapiReadItem_bool(cfgFile, "DefShowOtherVessels", DEFAULT_VALUES.SHOW_VESSELS);
-	oapiReadItem_bool(cfgFile, "DefShowHistoryTrack", DEFAULT_VALUES.SHOW_HISTORY);
-	oapiReadItem_float(cfgFile, "DefDrawSpecificAltitude", DEFAULT_VALUES.DRAW_SPECIFIC_ALT);
-	oapiReadItem_bool(cfgFile, "DefGroundtrackNumeric", DEFAULT_VALUES.GROUNDTRACK_NUMERIC);
-	oapiReadItem_bool(cfgFile, "DefConsiderTerrainForGroundTrack", DEFAULT_VALUES.CONSIDER_TERRAIN_GROUNDTRACK);
-
-	// Logic for disabling specific projections
-	char blockProjections[200];
-	oapiReadItem_string(cfgFile, "DisableSpecificProjections", blockProjections);
-	std::fill_n(DEFAULT_VALUES.BLOCK_PROJECTIONS, int(LASTENTRYPROJECTION), -1); // initalise array to -1 (don't block any)
-	char* comma = blockProjections;
-	int commaNr = 0;
-	while (comma != NULL && commaNr < int(LASTENTRYPROJECTION))
+	FILEHANDLE cfgFile = oapiOpenFile("MFD\\MapMFD2.cfg", FILE_IN_ZEROONFAIL, CONFIG);
+	if (cfgFile == 0) oapiWriteLog("MapMFD2 could not find cfg file!");
+	else
 	{
-		int blockedProjection = atoi(comma); // find first coming integer
+		myReadInt(cfgFile, "DefTrackMode", DEFAULT_VALUES.TRACK_MODE);
+		myReadInt(cfgFile, "DefProjection", DEFAULT_VALUES.PROJECTION);
+		myReadInt(cfgFile, "DefGridAngleSep", DEFAULT_VALUES.GRID_ANGLE_SEP);
+		myReadInt(cfgFile, "DefGridResolution", DEFAULT_VALUES.GRID_RESOLUTION);
+		myReadInt(cfgFile, "DefDefaultLinesAmount", DEFAULT_VALUES.LINES_AMOUNT);
+		myReadFloat(cfgFile, "DefGroundTrackStep", DEFAULT_VALUES.GROUNDTRACK_STEP);
+		myReadFloat(cfgFile, "DefGroundTrackMaxTimePeriodFraction", DEFAULT_VALUES.GROUNDTRACK_MAXTIMEFRAC);
+		myReadFloat(cfgFile, "DefTrackOrbitsNumber", DEFAULT_VALUES.GROUNDTRACK_ORBITS);
+		myReadInt(cfgFile, "DefViewCircleResolution", DEFAULT_VALUES.VIEW_CIRCLE_RESOLUTION);
+		myReadBool(cfgFile, "DefShowAltitudeRadar", DEFAULT_VALUES.ELEVATION_RADAR);
+		myReadBool(cfgFile, "DefShowOtherVessels", DEFAULT_VALUES.SHOW_VESSELS);
+		myReadBool(cfgFile, "DefShowHistoryTrack", DEFAULT_VALUES.SHOW_HISTORY);
+		myReadFloat(cfgFile, "DefDrawSpecificAltitude", DEFAULT_VALUES.DRAW_SPECIFIC_ALT);
+		myReadBool(cfgFile, "DefGroundtrackNumeric", DEFAULT_VALUES.GROUNDTRACK_NUMERIC);
+		myReadBool(cfgFile, "DefConsiderTerrainForGroundTrack", DEFAULT_VALUES.CONSIDER_TERRAIN_GROUNDTRACK);
 
-		if (blockedProjection >= 0 && blockedProjection < int(LASTENTRYPROJECTION)) // if valid index
+		// Logic for disabling specific projections
+		char blockProjections[200];
+		oapiReadItem_string(cfgFile, "DisableSpecificProjections", blockProjections);
+		std::fill_n(DEFAULT_VALUES.BLOCK_PROJECTIONS, int(LASTENTRYPROJECTION), -1); // initalise array to -1 (don't block any)
+		char* comma = blockProjections;
+		int commaNr = 0;
+		while (comma != NULL && commaNr < int(LASTENTRYPROJECTION))
 		{
-			DEFAULT_VALUES.BLOCK_PROJECTIONS[commaNr] = blockedProjection; // add to array of block list
-			oapiWriteLogV("MapMFD2: disabled %s (%i) projection", GetSpecificProjectionName(blockedProjection), blockedProjection); // tell user which projection is blocked
+			int blockedProjection = atoi(comma); // find first coming integer
+
+			if (blockedProjection >= 0 && blockedProjection < int(LASTENTRYPROJECTION)) // if valid index
+			{
+				DEFAULT_VALUES.BLOCK_PROJECTIONS[commaNr] = blockedProjection; // add to array of block list
+				oapiWriteLogV("MapMFD2: disabled %s (%i) projection", GetSpecificProjectionName(blockedProjection), blockedProjection); // tell user which projection is blocked
+			}
+
+			commaNr++; // update array index
+
+			char* nextComma = strchr(comma + 1, ',');
+			if (nextComma != NULL) comma = nextComma + 1;
+			else comma = NULL;
 		}
 
-		commaNr++; // update array index
+		// Get colours
+		ReadUserColour(cfgFile, "ColourCoast", &DEFAULT_COLOURS.COAST);
+		ReadUserColour(cfgFile, "ColourContour", &DEFAULT_COLOURS.CONTOUR);
+		ReadUserColour(cfgFile, "ColourMainTrack", &DEFAULT_COLOURS.MAINTRACK);
+		ReadUserColour(cfgFile, "ColourMainTrackHistory", &DEFAULT_COLOURS.MAINTRACKHISTORY);
+		ReadUserColour(cfgFile, "ColourTargetTrack", &DEFAULT_COLOURS.TARGETTRACK);
+		ReadUserColour(cfgFile, "ColourGrid", &DEFAULT_COLOURS.GRID);
+		ReadUserColour(cfgFile, "ColourBase", &DEFAULT_COLOURS.BASE);
+		for (int i = 0; i < 6; i++)
+		{
+			char ColourName[20];
+			sprintf(ColourName, "ColourMarker%i", i);
+			ReadUserColour(cfgFile, ColourName, &DEFAULT_COLOURS.MARKER[i]);
+		}
+		ReadUserColour(cfgFile, "ColourSunFill", &DEFAULT_COLOURS.SUNFILL);
+		ReadUserColour(cfgFile, "ColourTerminator", &DEFAULT_COLOURS.TERMINATOR);
+		ReadUserColour(cfgFile, "ColourSunIcon", &DEFAULT_COLOURS.SUNICON);
+		ReadUserColour(cfgFile, "ColourMainView", &DEFAULT_COLOURS.MAINVIEW);
+		ReadUserColour(cfgFile, "ColourTargetView", &DEFAULT_COLOURS.TARGETVIEW);
 
-		char* nextComma = strchr(comma + 1, ',');
-		if (nextComma != NULL) comma = nextComma + 1;
-		else comma = NULL;
+		// Enable default markers
+		char defaultMarkers[2000]; // many full paths can get long.
+		char markerFilePath[200];
+		oapiReadItem_string(cfgFile, "DefaultMarkers", defaultMarkers); // read entire string
+
+		int startPath = 0; // initialise at beginning.
+		int endPath = strlen(defaultMarkers); // initialise at end of line
+		comma = "hello world"; // give some non-NULL value
+		while (comma != NULL && strlen(defaultMarkers) > 10) // contents in default
+		{
+			comma = strchr(defaultMarkers + startPath, ',');
+			if (comma != NULL) endPath = comma - defaultMarkers;
+			myStrncpy(markerFilePath, defaultMarkers + startPath, endPath - startPath);
+
+			while (markerFilePath[0] == ' ') myStrncpy(markerFilePath, markerFilePath + 1, strlen(markerFilePath)); // remove leading spaces
+			while (markerFilePath[strlen(markerFilePath) - 1] == ' ') myStrncpy(markerFilePath, markerFilePath, strlen(markerFilePath) - 1); // remove trailing spaces
+
+			sprintf(enabledMarkers[numMarkers], markerFilePath);
+			numMarkers++;
+			oapiWriteLogV("MapMFD2: default marker %i <%s>", numMarkers, markerFilePath);
+
+			startPath = comma - defaultMarkers + 1; // update start path
+			endPath = strlen(defaultMarkers); // assume until end of string, unless a new comma is found.
+		}
 	}
 
-	// Get colours
-	ReadUserColour(cfgFile, "ColourCoast", &DEFAULT_COLOURS.COAST);
-	ReadUserColour(cfgFile, "ColourContour", &DEFAULT_COLOURS.CONTOUR);
-	ReadUserColour(cfgFile, "ColourMainTrack", &DEFAULT_COLOURS.MAINTRACK);
-	ReadUserColour(cfgFile, "ColourMainTrackHistory", &DEFAULT_COLOURS.MAINTRACKHISTORY);
-	ReadUserColour(cfgFile, "ColourTargetTrack", &DEFAULT_COLOURS.TARGETTRACK);
-	ReadUserColour(cfgFile, "ColourGrid", &DEFAULT_COLOURS.GRID);
-	ReadUserColour(cfgFile, "ColourBase", &DEFAULT_COLOURS.BASE);
-	for (int i = 0; i < 6; i++)
-	{
-		char ColourName[20];
-		sprintf(ColourName, "ColourMarker%i", i);
-		ReadUserColour(cfgFile, ColourName, &DEFAULT_COLOURS.MARKER[i]);
-	}
-	ReadUserColour(cfgFile, "ColourSunFill", &DEFAULT_COLOURS.SUNFILL);
-	ReadUserColour(cfgFile, "ColourTerminator", &DEFAULT_COLOURS.TERMINATOR);
-	ReadUserColour(cfgFile, "ColourSunIcon", &DEFAULT_COLOURS.SUNICON);
-	ReadUserColour(cfgFile, "ColourMainView", &DEFAULT_COLOURS.MAINVIEW);
-	ReadUserColour(cfgFile, "ColourTargetView", &DEFAULT_COLOURS.TARGETVIEW);
-
-	// Enable default markers
-	char defaultMarkers[2000]; // many full paths can get long.
-	char markerFilePath[200];
-	oapiReadItem_string(cfgFile, "DefaultMarkers", defaultMarkers); // read entire string
-
-	int startPath = 0; // initialise at beginning.
-	int endPath = strlen(defaultMarkers); // initialise at end of line
-	comma = "hello world"; // give some non-NULL value
-	while (comma != NULL && strlen(defaultMarkers) > 10) // contents in default
-	{
-		comma = strchr(defaultMarkers + startPath, ',');
-		if (comma != NULL) endPath = comma - defaultMarkers;
-		myStrncpy(markerFilePath, defaultMarkers + startPath, endPath - startPath);
-
-		while (markerFilePath[0] == ' ') myStrncpy(markerFilePath, markerFilePath + 1, strlen(markerFilePath)); // remove leading spaces
-		while (markerFilePath[strlen(markerFilePath) - 1] == ' ') myStrncpy(markerFilePath, markerFilePath, strlen(markerFilePath) - 1); // remove trailing spaces
-
-		sprintf(enabledMarkers[numMarkers], markerFilePath);
-		numMarkers++;
-		oapiWriteLogV("MapMFD2: default marker %i <%s>", numMarkers, markerFilePath);
-
-		startPath = comma - defaultMarkers + 1; // update start path
-		endPath = strlen(defaultMarkers); // assume until end of string, unless a new comma is found.
-	}
 
 	oapiCloseFile(cfgFile, FILE_IN);
 }
