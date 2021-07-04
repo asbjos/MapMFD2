@@ -2574,18 +2574,14 @@ void MapMFD::MakeMap(oapi::Sketchpad* skp, const char *refName, int *txtPos)
 	{
 		if (mapExists)
 		{
-			//char* line;
 			int lineNr = 0;
 
 			// Get total number of vertices (first line of vec), to later ensure successful aqusition.
-			//line = cacheMap[lineNr];
-			//int totalVertices = atoi(line);
 			int totalVertices = int(cacheMap[lineNr][0]);
 			lineNr++;
 
 			// Get total number of segments, so that we know how long to iterate
-			//line = cacheMap[lineNr];
-			int totalSegments = int(cacheMap[lineNr][0]);// atoi(line);
+			int totalSegments = int(cacheMap[lineNr][0]);
 			lineNr++;
 
 			// Set the ratio of lines to plot
@@ -2604,7 +2600,6 @@ void MapMFD::MakeMap(oapi::Sketchpad* skp, const char *refName, int *txtPos)
 			int vertexCounter = 0;
 			for (int i = 0; i < totalSegments; i++)
 			{
-				//line = cacheMap[lineNr];
 				int numVerticesInSegment = int(cacheMap[lineNr][0]); //atoi(line);
 				lineNr++;
 
@@ -3105,24 +3100,8 @@ void MapMFD::MakeShip(oapi::Sketchpad* skp, double currentLong, double currentLa
 	// Draw orbit track
 	ELEMENTS el;
 	ORBITPARAM prm;
-	//GetObjectRelativeElements(, el, &prm);
-	v->GetElements(ref, el, &prm, 0.0, FRAME_EQU);
-	if (el.e < 1.0) prm.MnA = posangle(prm.MnA); // for some reason, it can be negative, which messes up my calculations
-	//GetObjectRelativeElements(v->GetHandle(), el, &prm);
 	VECTOR3 statePos, stateVel;
-	v->GetRelativePos(ref, statePos);
-	v->GetRelativeVel(ref, stateVel);
-	MATRIX3 rot;
-	oapiGetPlanetObliquityMatrix(ref, &rot); // Ecl2Equ, but do it here explecitely, so that we only call the matrix once.
-	statePos = tmul(rot, statePos);
-	stateVel = tmul(rot, stateVel);
-	// Orbiter has a wrong reference system. Swap y and z.
-	double buffer = statePos.z;
-	statePos.z = statePos.y;
-	statePos.y = buffer;
-	buffer = stateVel.z;
-	stateVel.z = stateVel.y;
-	stateVel.y = buffer;
+	GetObjectRelativeElements(v->GetHandle(), el, &prm, &statePos, &stateVel);
 
 	// Main orbit track
 	skp->SetPen(mainOrbitTrack); // attempted improvement of above thing
@@ -4439,7 +4418,13 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 	double period = PI2 * sqrt(pow(SMa, 3) / refMu);
 	double MnA = eccentricAnomaly - eccentricity * sin(eccentricAnomaly);
 	if (eccentricity > 1.0) MnA = eccentricity * sinh(eccentricAnomaly) - eccentricAnomaly;
-	//else MnA = posangle(MnA); // if elliptical orbit, make it a posangle. This simplifies calculations later on. 
+	else MnA = posangle(MnA); // if elliptical orbit, make it a posangle. This simplifies calculations later on. 
+
+	double periapsis = (1.0 - eccentricity) * SMa; // true for all eccentricities
+	double apoapsis = (1.0 + eccentricity) * SMa; // dis gon be funky for e > 1, but is then actually undefined
+	double ApT = posangle(PI - MnA) * sqrt(SMa * SMa * SMa / refMu); // posangle so that we always get the next ApT, and never a negative time.
+	double PeT = posangle(PI2 - MnA) * sqrt(SMa * SMa * SMa / refMu);
+	if (eccentricity > 1.0) PeT = -MnA * sqrt(-SMa * SMa * SMa / refMu);
 
 	el.a = SMa;
 	el.e = eccentricity;
@@ -4452,6 +4437,10 @@ void MapMFD::GetObjectRelativeElements(OBJHANDLE tgt, ELEMENTS& el, ORBITPARAM* 
 	prm->TrA = TrA;
 	prm->T = period; // this will be erranous for hyperbolic orbits, but it won't bother us.
 	prm->MnA = MnA;
+	prm->PeD = periapsis;
+	prm->ApD = apoapsis;
+	prm->PeT = PeT;
+	prm->ApT = ApT;
 }
 
 char* MapMFD::GetCoordinateString(double longitude, double latitude)
