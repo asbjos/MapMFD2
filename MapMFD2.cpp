@@ -952,10 +952,16 @@ bool MapMFD::ConsumeKeyImmediate(DWORD key, bool newPress)
 
 	if (newPress) immediateKeyStart = syst;
 
-	double angDelta = 1.0 * RAD + (syst - immediateKeyStart) * (syst - immediateKeyStart) * 7.5 * RAD; // speed up motion over time with a quadratic law.
-	angDelta = min(angDelta, 360.0 * RAD); // don't allow faster than 360 deg/s. Currently takes sqrt((360 - 1) / 7.5) = 6.9 seconds to hit limit.
-	// And then finally adjust for zoom:
-	angDelta /= double(centreZoom);
+	double t = syst - immediateKeyStart; // time since started pressing button.
+	t = max(t, 0); // sanity check. Must be positive time (can't pan for a click happening in the future).
+	
+	// This calculation for panning speed is loosely based on the code of the default Map MFD, now that Orbiter is open-sourced (https://github.com/mschweiger/orbiter/blob/master/Src/Orbiter/MfdMap.cpp#L179).
+	// It uses the the same linear acceleration in the beginning, but is quadratic, which makes it more snappy when holding the pan button pressed.
+	// The max angular speed of 8 radians/second is from the default MFD. But whereas default MFD takes 16 s to reach it, I do it here in 3.53 seconds.
+	double k = 1.0; // seconds until the speed is twice the default Map pan speed would have been. Determines how snappy the acceleration is.
+	double angDelta = 0.5 * t * t / k + 0.5 * t; // 0.5 is default Map pan speedup (angDelta = 0.5 * t).
+	angDelta = min(angDelta, 8.0); // don't allow faster than 8 rad/s. Currently takes 3.53 seconds to hit limit.
+	angDelta /= double(centreZoom); // And then finally adjust for zoom:
 
 	switch (key)
 	{
@@ -1587,7 +1593,7 @@ void MapMFD::ConfigScreen(oapi::Sketchpad* skp)
 	if (!orbitTrackGround) skp->SetTextColor(configTextColour); // switch back to normal text colour if we were in inactive state.
 
 	if (!orbitTrackGround) skp->SetTextColor(inactiveConfigTextColour); // this setting only affects ground track, so indicate that by graying out if not in that mode
-	sprintf(cbuf, "Orbit track max period fraction");
+	sprintf(cbuf, "Orbit track max fraction of day");
 	skp->Text(textX0, textY0 + int(CONFIGTRACKMAXPERIODFRAC) * dY, cbuf, strlen(cbuf));
 	sprintf(cbuf, "%.1f", maxPeriodFraction);
 	skp->Text(textX0 * secondRowIndent, textY0 + int(CONFIGTRACKMAXPERIODFRAC) * dY, cbuf, strlen(cbuf));
